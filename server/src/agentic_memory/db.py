@@ -275,17 +275,22 @@ async def rebuild(pool: asyncpg.Pool, batch: int = 500) -> dict[str, int]:
 
 
 async def count(pool: asyncpg.Pool) -> dict[str, int]:
-    """How much the store holds."""
+    """How much the store holds.
+
+    One statement, so the numbers describe the same moment. Counted one at a
+    time they disagree while a load is running, which reads as a bug in the
+    writing rather than a bug in the counting.
+    """
+    query = """
+        SELECT (SELECT count(*) FROM otel_exports) AS exports,
+               (SELECT count(*) FROM logs)         AS logs,
+               (SELECT count(*) FROM resources)    AS resources,
+               (SELECT count(*) FROM scopes)       AS scopes,
+               (SELECT count(*) FROM otel_exports WHERE unpacked_at IS NULL) AS pending
+    """
     async with pool.acquire() as connection:
-        return {
-            "exports": await connection.fetchval("SELECT count(*) FROM otel_exports"),
-            "logs": await connection.fetchval("SELECT count(*) FROM logs"),
-            "pending": await connection.fetchval(
-                "SELECT count(*) FROM otel_exports WHERE unpacked_at IS NULL"
-            ),
-            "resources": await connection.fetchval("SELECT count(*) FROM resources"),
-            "scopes": await connection.fetchval("SELECT count(*) FROM scopes"),
-        }
+        found = await connection.fetchrow(query)
+    return dict(found)
 
 
 async def recent(

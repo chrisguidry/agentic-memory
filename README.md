@@ -86,5 +86,10 @@ code is a first cut of, at sketch fidelity.
 The plan's version differs from this proof of concept in three ways worth
 knowing. It sends records over OTLP from a Go client rather than from
 Python, it sweeps session files as a safety net rather than treating the
-backfill as a separate tool, and it keeps the record in two tables rather
-than one wide one.
+backfill as a separate tool, and it reaches a harness through a shim rather
+than through a backfill that reads what the harness already wrote.
+
+The store keeps the record four ways: the export as it arrived, the unpacked
+log a query reads, and a table each for the resource and the scope that every
+OpenTelemetry signal carries. The export is the permanent copy, so the
+unpacked form can be thrown away and rebuilt when the extraction changes.

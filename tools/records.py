@@ -158,8 +158,7 @@ class Session:
         """
         identity = ":".join(part for part in (entry, kind, within) if part) or None
 
-        return {
-            "timeUnixNano": nanos(when_ms) if when_ms is not None else nanos(0),
+        found = {
             "severityText": "INFO",
             "body": {"stringValue": body},
             "attributes": self.shared()
@@ -170,3 +169,10 @@ class Session:
             )
             + kept(*(extra or [])),
         }
+
+        # A record that carries no time of its own says so. Sending zero
+        # instead would date it to 1970 and sort it before everything real.
+        if when_ms is not None:
+            found["timeUnixNano"] = nanos(when_ms)
+
+        return found
