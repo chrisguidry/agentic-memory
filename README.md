@@ -15,7 +15,8 @@ it calls no model.
 |---|---|---|
 | `server/` | Docker Compose | Receives OTLP on `/v1/logs` and writes it to Postgres |
 | `pi/` | A symlink into `~/.pi/agent/extensions/` | Sends each message as it happens |
-| `tools/backfill.py` | The host, through `uv` | Reads the session files pi already wrote |
+| `tools/backfill.py` | The host, through `uv` | Reads the session files a harness already wrote |
+| `tools/harnesses/` | The host | One module per harness, which is the only place a format is read |
 | `tools/scope.py` | The host | Derives a session's scope from the directories it is in |
 | `docker-compose.yml` | The host | Postgres, and the server |
 
@@ -38,7 +39,9 @@ docker compose logs -f server         # watch it work
 
 ln -sfn "$PWD/pi" ~/.pi/agent/extensions/agentic-memory
 
-uv run tools/backfill.py --from ~/.pi/agent/sessions
+uv run tools/backfill.py --harness pi
+uv run tools/backfill.py --harness claude-code
+uv run tools/backfill.py --harness codex
 ```
 
 The service listens on `127.0.0.1:4318`, which is the OTLP/HTTP port. The
@@ -52,14 +55,15 @@ curl -s "http://127.0.0.1:4318/records?scope=github.com/acme&limit=5"
 
 ## What a backfill produces
 
-`tools/backfill.py` reads the session files pi already wrote and sends them
-as OTLP log records. A run over several months of one machine's sessions
-produced records carrying:
+`tools/backfill.py` reads the session files a harness already wrote and
+sends them as OTLP log records. A run over several months of one machine's
+sessions produced records carrying:
 
 - the session and the entry inside it, which make a re-send harmless
 - the scope, derived from the directory the session started in
 - the model, the tokens, and the cost of each response
 - the chain back to the person, for a session a subagent ran
+- the session's title and its cost totals, where the harness recorded them
 
 A record that arrives twice is stored once, because the entry id is the
 same from every producer. Re-running the backfill over sessions the live
