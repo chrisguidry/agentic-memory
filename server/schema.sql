@@ -128,8 +128,21 @@ CREATE TABLE IF NOT EXISTS logs (
 CREATE INDEX IF NOT EXISTS logs_session
     ON logs (session_id, occurred_at);
 
+-- The scope index uses text_pattern_ops because the database collates as
+-- en_US.utf8, and a plain btree cannot serve `scope_key LIKE 'prefix%'` under
+-- that collation. Retrieval walks up the scope path, so the prefix match is
+-- the common case and equality is the rare one. The pattern index serves
+-- both, where a plain one served only the equality and left the prefix to a
+-- filter over every row in the scope.
 CREATE INDEX IF NOT EXISTS logs_scope
-    ON logs (scope_key, occurred_at DESC);
+    ON logs (scope_key text_pattern_ops, occurred_at DESC);
+
+-- Search over the body, because the question is usually "where did I say
+-- this" rather than "what happened at 14:32". Unindexed this is a sequential
+-- scan that stops early on a common word and reads the whole table on a rare
+-- one, which is the case that matters.
+CREATE INDEX IF NOT EXISTS logs_body_search
+    ON logs USING gin (to_tsvector('english', body));
 
 CREATE INDEX IF NOT EXISTS logs_kind
     ON logs (kind);
