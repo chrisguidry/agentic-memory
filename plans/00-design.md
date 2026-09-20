@@ -379,6 +379,70 @@ record holds the full body and the telemetry holds the reference.
 A tool result too large for a batch goes to a file the same way, and the
 record holds the path.
 
+## The scope
+
+A session belongs to a scope, and the scope is what a memory is filed
+under. A memory about the liken ecosystem is available in any repository
+inside it, and a memory about one repository does not leak into a sibling.
+
+The scope is derived from the directories the session is in. Nothing is
+declared, because a declared layout goes stale the moment a directory
+moves, and the filesystem already answers every question a layout would
+have been written to answer.
+
+Three questions are asked of each directory, from the working directory up
+to the home directory.
+
+| Question | Answer |
+|---|---|
+| Is it a git repository? | `repo` |
+| Is it under a forge, and does it hold repositories? | `org` |
+| Is its name a domain? | `forge` |
+
+The directories that answer yes become the scope, joined by a slash. The
+home directory is the boundary and is never a level. A directory that
+answers none of the three leaves the scope to the top directory under
+home.
+
+```
+~/src/github.com/liken-sh            github.com/liken-sh             org
+~/src/github.com/liken-sh/liken      github.com/liken-sh/liken       repo
+~/src/code.example.com/widget     code.example.com/widget      repo
+~/src/github.com/acme/widget   github.com/acme/widget    repo
+~/tmp                                tmp                             directory
+~/.ai                                .ai                             directory
+```
+
+Three rows in that table are why the questions are these questions.
+
+**`code.example.com` has no organization level.** A rule that counted path
+segments would call `widget` an organization. This rule counts
+repositories, so a forge with one level and a forge with two both work.
+
+**`liken-sh` is not a repository.** A rule that assumed the leaf is a
+repository would find nothing there, and a person who works in that
+directory most of the time would have no scope for the work. Holding
+repositories is what makes it an organization.
+
+**`~/tmp` holds repositories and is not an organization.** Two scratch
+clones sit in it. Holding repositories is not enough on its own, which is
+why an organization is a collection that belongs to a forge.
+
+The key is a path, so retrieval inherits without a rule of its own. A
+memory scoped to `github.com/liken-sh` is available in
+`github.com/liken-sh/liken`, and a memory scoped to
+`github.com/chrisguidry/docket` is not.
+
+### What the scope is not
+
+The scope is where a session started, not what it worked on. A session
+that starts in an organization root scopes to the ecosystem even when it
+touched one repository. The paths inside the tool calls say what the work
+was, and a later pass can narrow a scope with them.
+
+The client derives the scope, because only the machine knows its own
+layout. The service stores what it is told.
+
 ## The memories
 
 A memory is one atomic statement, in one sentence or two. It carries

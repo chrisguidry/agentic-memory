@@ -9,7 +9,7 @@
  * down a turn, and a send that fails costs a record that the sweep will find.
  */
 
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -26,6 +26,7 @@ import {
   type Attribute,
   type Record,
 } from "./otlp";
+import { scopeOf, type Scope } from "./scope";
 
 const ENDPOINT =
   process.env.AGENTIC_MEMORY_ENDPOINT ?? "http://127.0.0.1:4318/v1/logs";
@@ -39,7 +40,7 @@ const SEND_TIMEOUT_MS = 5_000;
 const pending: Record[] = [];
 let timer: ReturnType<typeof setTimeout> | undefined;
 let repository: Attribute[] = [];
-let project: string | undefined;
+let scope: Scope | undefined;
 
 /** Add a record to the batch, and send the batch when it is time. */
 function enqueue(record: Record): void {
@@ -88,7 +89,8 @@ function session(ctx: ExtensionContext): Attribute[] {
     text("session.previous_id", sessionIdIn(manager.getHeader()?.parentSession)),
     text("gen_ai.conversation.id", id),
     text("gen_ai.agent.name", "pi"),
-    text("agentic_memory.project", project ?? projectOf(cwd)),
+    text("agentic_memory.scope", scope?.key),
+    text("agentic_memory.scope.kind", scope?.kind),
     text("agentic_memory.root", "person"),
     whole("agentic_memory.actor.depth", 0),
     text("process.working_directory", cwd),
@@ -247,10 +249,9 @@ async function readRepository(pi: ExtensionAPI, cwd: string): Promise<void> {
   const root = await run(["rev-parse", "--show-toplevel"]);
   const parts = remoteParts(remote);
 
-  // The repository is the project, not the directory the session happened to
-  // start in. An organization root holds a dozen repositories, and naming all
-  // of them after the root hides which one the work was in.
-  project = root === undefined ? parts.name : projectOf(root);
+  // The scope is derived from the directories rather than declared, and the
+  // repository root is what the derivation starts from.
+  scope = scopeOf(cwd, homedir(), root);
 
   repository = kept(
     text("vcs.repository.name", root === undefined ? parts.name : projectOf(root)),

@@ -16,6 +16,7 @@ it calls no model.
 | `server/` | Docker Compose | Receives OTLP on `/v1/logs` and writes it to Postgres |
 | `pi/` | A symlink into `~/.pi/agent/extensions/` | Sends each message as it happens |
 | `tools/backfill.py` | The host, through `uv` | Reads the session files pi already wrote |
+| `tools/scope.py` | The host | Derives a session's scope from the directories it is in |
 | `docker-compose.yml` | The host | Postgres, and the server |
 
 A transcript record is a log record. Its body holds the text, and its
@@ -40,7 +41,7 @@ source is mounted into the container and uvicorn reloads it, so an edit to
 
 ```bash
 curl -s http://127.0.0.1:4318/health
-curl -s "http://127.0.0.1:4318/records?project=liken-sh&limit=5"
+curl -s "http://127.0.0.1:4318/records?scope=github.com/liken-sh&limit=5"
 ```
 
 ## What is loaded
@@ -49,25 +50,25 @@ One machine's pi sessions, read on 2026-09-20.
 
 | | |
 |---|---|
-| Records | 35,037 |
-| Sessions | 228 |
-| Projects | 12 |
+| Records | 35,388 |
+| Sessions | 229 |
+| Scopes | 12 |
 | First and last | 2026-02-20 to 2026-09-20 |
-| On disk | 218 MB |
-| Tokens | 48.5M in, 6.5M out, 1.26B cache reads |
-| Cost recorded | $276.77 |
+| On disk | 222 MB |
+| Tokens | 48.6M in, 6.6M out, 1.31B cache reads |
+| Cost recorded | $277.01 |
 
 | Kind | Records |
 |---|---|
-| `tool_result` | 13,334 |
-| `response` | 12,082 |
-| `thinking` | 8,357 |
-| `prompt` | 1,257 |
+| `tool_result` | 13,460 |
+| `response` | 12,194 |
+| `thinking` | 8,465 |
+| `prompt` | 1,262 |
 | `system` | 7 |
 
-Every record carries its session and its entry id. 84 sessions name a
-parent, and every parent is in the store, so the chain from a subagent
-back to the person resolves.
+Every record carries its session, its entry id, and its scope. 84 sessions
+name a parent, and every parent is in the store, so the chain from a
+subagent back to the person resolves.
 
 ## What this is not
 

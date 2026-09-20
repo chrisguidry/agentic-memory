@@ -27,6 +27,8 @@ from pathlib import Path
 from socket import gethostname
 from typing import Any
 
+from scope import scope_of
+
 DEFAULT_ENDPOINT = "http://127.0.0.1:4318/v1/logs"
 SCOPE = "agentic-memory.pi"
 VERSION = "0.0.1"
@@ -121,20 +123,6 @@ class Repository:
             )
         return self._seen[cwd]
 
-    def name_of(self, cwd: str | None) -> str | None:
-        """The project a working directory belongs to.
-
-        The repository is the project, not the directory the session happened
-        to start in. An organization root holds a dozen repositories, and
-        naming all of them after the root hides which one the work was in.
-        """
-        if not cwd:
-            return None
-        for found in self.of(cwd):
-            if found["key"] == "vcs.repository.name":
-                return found["value"]["stringValue"]
-        return Path(cwd).name
-
     @staticmethod
     def _git(cwd: str, *args: str) -> str | None:
         try:
@@ -197,12 +185,14 @@ def records_for(
 
     cwd = header.get("cwd")
     session = header.get("id")
+    scope, scope_kind = scope_of(Path(cwd)) if cwd else (None, None)
     common = kept(
         attribute("session.id", session),
         attribute("session.previous_id", session_id_in(header.get("parentSession"))),
         attribute("gen_ai.conversation.id", session),
         attribute("gen_ai.agent.name", "pi"),
-        attribute("agentic_memory.project", repository.name_of(cwd)),
+        attribute("agentic_memory.scope", scope),
+        attribute("agentic_memory.scope.kind", scope_kind),
         attribute("agentic_memory.root", "person"),
         attribute("agentic_memory.actor.depth", 0),
         attribute("process.working_directory", cwd),

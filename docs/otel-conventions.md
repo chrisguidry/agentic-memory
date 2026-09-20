@@ -120,7 +120,7 @@ can use standard names.
 
 | Attribute | Meaning |
 |---|---|
-| `vcs.repository.name` | the repository, which is the project |
+| `vcs.repository.name` | the repository |
 | `vcs.repository.url.full` | the repository's remote |
 | `vcs.owner.name` | the organization the repository belongs to |
 | `vcs.ref.head.name` | the branch |
@@ -129,11 +129,16 @@ can use standard names.
 | `code.file.path`, `code.line.number` | a location in a file, for a record about one |
 | `error.type` | the error, on a record that carries one |
 
-The project a record belongs to is `vcs.repository.name`. The working
-directory is not the project: an organization root holds a dozen
-repositories, and naming all of them after the root hides which one the
-work was in. `agentic_memory.project` carries a harness's own answer, and
-the service prefers the repository when both are present.
+## The scope
+
+| Attribute | Meaning |
+|---|---|
+| `agentic_memory.scope` | the scope key, such as `github.com/liken-sh/liken` |
+| `agentic_memory.scope.kind` | `repo`, `org`, `forge`, or `directory` |
+
+The scope has no OpenTelemetry attribute. It is derived on the client from
+the directories the session is in, because only the machine knows its own
+layout, and [`plans/00-design.md`](../plans/00-design.md) holds the scheme.
 
 ## What OpenTelemetry does not define
 
@@ -147,6 +152,7 @@ so a reader can tell them apart from a standard name at a glance.
 | `agentic_memory.actor.depth` | how many agents separate the text from a person |
 | `agentic_memory.root` | `person` when a person began the session, `autonomous` when no person did |
 | `agentic_memory.kind` | `prompt`, `response`, `thinking`, `tool_call`, `tool_result`, or `system` |
-| `agentic_memory.project` | the project this record belongs to |
+| `agentic_memory.scope` | the scope key |
+| `agentic_memory.scope.kind` | `repo`, `org`, `forge`, or `directory` |
 | `agentic_memory.cost.total` | the cost of the operation, in United States dollars |
 | `agentic_memory.content` | the harness's own structured form of the message, so nothing is lost in the translation |

@@ -55,7 +55,7 @@ async def logs(request: Request) -> dict:
 @app.get("/records")
 async def records(
     request: Request,
-    project: str | None = None,
+    scope: str | None = None,
     kind: str | None = None,
     session_id: str | None = None,
     harness: str | None = None,
@@ -64,7 +64,7 @@ async def records(
     """The most recent records, for looking at what arrived."""
     return await db.recent(
         request.app.state.pool,
-        project=project,
+        scope=scope,
         kind=kind,
         session_id=session_id,
         harness=harness,

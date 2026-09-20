@@ -10,9 +10,9 @@ CREATE TABLE IF NOT EXISTS otlp_log_records (
     received_at       timestamptz NOT NULL DEFAULT now(),
 
     -- the OTLP envelope, kept whole
-    resource          jsonb NOT NULL,
-    scope             jsonb NOT NULL,
-    record            jsonb NOT NULL,
+    resource              jsonb NOT NULL,
+    instrumentation_scope jsonb NOT NULL,
+    record                jsonb NOT NULL,
 
     -- the log record itself
     occurred_at       timestamptz,
@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS otlp_log_records (
     model             text,
     response_model    text,
     tool_name         text,
-    project           text,
+    scope             text,
+    scope_kind        text,
     repository        text,
     owner             text,
     revision          text,
@@ -55,8 +56,8 @@ CREATE TABLE IF NOT EXISTS otlp_log_records (
 CREATE INDEX IF NOT EXISTS otlp_log_records_session
     ON otlp_log_records (session_id, occurred_at);
 
-CREATE INDEX IF NOT EXISTS otlp_log_records_project
-    ON otlp_log_records (project, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS otlp_log_records_scope
+    ON otlp_log_records (scope, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS otlp_log_records_kind
     ON otlp_log_records (kind);

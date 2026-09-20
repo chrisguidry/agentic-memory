@@ -126,7 +126,7 @@ def row(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
 
     return {
         "resource": json.dumps(resource, ensure_ascii=False),
-        "scope": json.dumps(scope, ensure_ascii=False),
+        "instrumentation_scope": json.dumps(scope, ensure_ascii=False),
         "record": json.dumps(record, ensure_ascii=False),
         "occurred_at": _moment(record.get("timeUnixNano")),
         "observed_at": _moment(record.get("observedTimeUnixNano")),
@@ -146,11 +146,11 @@ def row(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
         "model": _text("gen_ai.request.model", carried, resource),
         "response_model": _text("gen_ai.response.model", carried, resource),
         "tool_name": _text("gen_ai.tool.name", carried, resource),
-        # The repository is the project when there is one. An organization
-        # root holds a dozen repositories, and naming all of them after the
-        # root hides which one the work was in.
-        "project": _text("vcs.repository.name", carried, resource)
-        or _text("agentic_memory.project", carried, resource),
+        # The scope is derived on the client, from the directories the session
+        # is in. The service stores what it is told, because only the machine
+        # knows its own layout.
+        "scope": _text("agentic_memory.scope", carried, resource),
+        "scope_kind": _text("agentic_memory.scope.kind", carried, resource),
         "repository": _text("vcs.repository.url.full", carried, resource),
         "owner": _text("vcs.owner.name", carried, resource),
         "revision": _text("vcs.ref.head.revision", carried, resource),

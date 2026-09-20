@@ -10,7 +10,7 @@ log = logging.getLogger("agentic_memory")
 # The columns, in the order the insert names them.
 COLUMNS = (
     "resource",
-    "scope",
+    "instrumentation_scope",
     "record",
     "occurred_at",
     "observed_at",
@@ -30,7 +30,8 @@ COLUMNS = (
     "model",
     "response_model",
     "tool_name",
-    "project",
+    "scope",
+    "scope_kind",
     "repository",
     "owner",
     "revision",
@@ -48,7 +49,7 @@ COLUMNS = (
 )
 
 # These four arrive as JSON text and are stored as jsonb.
-JSONB = ("resource", "scope", "record", "attributes")
+JSONB = ("resource", "instrumentation_scope", "record", "attributes")
 
 PLACEHOLDERS = ", ".join(
     f"${index}::jsonb" if column in JSONB else f"${index}"
@@ -68,7 +69,7 @@ INSERT = f"""
 SUMMARY = (
     "id, received_at, occurred_at, session_id, entry_id, harness, machine, "
     "actor, actor_depth, root, kind, operation, provider, model, tool_name, "
-    "project, owner, repository, revision, working_directory, "
+    "scope, scope_kind, owner, repository, revision, working_directory, "
     "input_tokens, output_tokens, cost_total, error_type, "
     "left(body, 200) AS body"
 )
@@ -137,7 +138,7 @@ async def count(pool: asyncpg.Pool) -> int:
 async def recent(
     pool: asyncpg.Pool,
     *,
-    project: str | None = None,
+    scope: str | None = None,
     kind: str | None = None,
     session_id: str | None = None,
     harness: str | None = None,
@@ -148,7 +149,7 @@ async def recent(
     values: list[Any] = []
 
     for column, wanted in (
-        ("project", project),
+        ("scope", scope),
         ("kind", kind),
         ("session_id", session_id),
         ("harness", harness),
