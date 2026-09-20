@@ -1,15 +1,15 @@
 """Claude Code's sessions.
 
 One JSONL file per session, named for the session's uuid, inside a directory
-named for the working directory. There is no header line: every entry carries
+named for the working directory. There is no header line: every entry has
 the session id, the working directory, the branch, and its own uuid.
 
-Two things about this format are worth knowing before reading the code.
+Two things about this format shape the code that reads it.
 
 **A tool result arrives as a `user` entry.** It is a user-role message whose
 content is a `tool_result` block, so an adapter that maps role to actor
-records a tool's output as something the person typed. The blocks decide, not
-the role.
+records a tool's output as something the person typed. The blocks determine
+the actor, not the role.
 
 **Most entries are the harness's own bookkeeping.** `mode`, `last-prompt`,
 `atis-latch`, `ai-title`, `queue-operation`, `file-history-*`, `cost-state`,
@@ -47,9 +47,9 @@ def read(path: Path, machine: str) -> Iterator[dict[str, Any]]:
     entries = list(_entries(path))
 
     # There is no header line, and the bookkeeping entries that open a file
-    # carry a session id but no working directory. The file's working
+    # have a session id but no working directory. The file's working
     # directory is taken from the first entry that has one, so a record that
-    # appears before it still knows where the session was.
+    # appears before it is still recorded with the session's directory.
     cwd = next((entry.get("cwd") for entry in entries if entry.get("cwd")), None)
     version = next((entry.get("version") for entry in entries if entry.get("version")), None)
 

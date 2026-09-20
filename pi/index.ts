@@ -147,6 +147,11 @@ function joined(blocks: { type: string; [k: string]: unknown }[]): string {
     .join("\n");
 }
 
+/** The value when it is a string, and undefined when it is not. */
+function str(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 /** Turn one pi message into the records it deserves. */
 function records(message: any, ctx: ExtensionContext): Record[] {
   const blocks = blocksOf(message);
@@ -182,7 +187,7 @@ function records(message: any, ctx: ExtensionContext): Record[] {
       ];
 
       // Reasoning is its own record. It is the part other harnesses leave
-      // out, and a later pass wants to read it apart from the answer.
+      // out, and a later pass reads it apart from the answer.
       blocks
         .filter((block) => block.type === "thinking")
         .forEach((block, index) => {
@@ -195,6 +200,28 @@ function records(message: any, ctx: ExtensionContext): Record[] {
               extra: [
                 text("gen_ai.operation.name", "chat"),
                 text("gen_ai.request.model", message.model),
+              ],
+            }),
+          );
+        });
+
+      // A tool call is its own record, so a call and its result join on the
+      // call id. pi puts the call in the assistant message.
+      blocks
+        .filter((block) => block.type === "toolCall")
+        .forEach((block) => {
+          const id = str(block.id);
+          records.push(
+            build(ctx, message, {
+              kind: "tool_call",
+              actor: "agent",
+              body: JSON.stringify(block.arguments ?? {}),
+              within: id,
+              extra: [
+                text("gen_ai.operation.name", "execute_tool"),
+                text("gen_ai.tool.name", str(block.name)),
+                text("gen_ai.tool.call.id", id),
+                text("gen_ai.tool.type", "function"),
               ],
             }),
           );

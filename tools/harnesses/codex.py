@@ -2,18 +2,18 @@
 
 One JSONL file per rollout, named `rollout-<timestamp>-<rollout id>.jsonl`
 under a directory per day. Every line is a flat envelope with a `type` and a
-`payload`, and the payload has its own `type`, so the pair decides what a line
-is.
+`payload`, and the payload has its own `type`, so the pair determines what a
+line is.
 
-Three things about this format are worth knowing before reading the code.
+Three things about this format shape the code that reads it.
 
-**A conversation is many files.** `session_meta` carries both a `session_id`
+**A conversation is many files.** `session_meta` has both a `session_id`
 and an `id`. The `session_id` is the conversation, and the `id` is the rollout
 that file holds. One conversation can span twenty rollouts, each a separate
 agent thread, so the session is the conversation and the rollout names the
 thread a record came from.
 
-**A line carries a sequence number, and it is per rollout.** `ordinal` counts
+**A line has a sequence number, and it is per rollout.** `ordinal` counts
 from zero for the life of the file, so it orders records that share a
 timestamp. It does not identify a line on its own, because every rollout
 starts again at zero.

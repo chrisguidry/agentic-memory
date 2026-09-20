@@ -2,7 +2,7 @@
  * Encoding records as OTLP log records.
  *
  * The attribute names are listed in `docs/otel-conventions.md`. This module
- * only builds the payload; `index.ts` decides what a record is.
+ * only builds the payload; `index.ts` defines what a record is.
  */
 
 import { readFileSync } from "node:fs";
@@ -77,7 +77,7 @@ export function resource(machine: string): { attributes: Attribute[] } {
 }
 
 export interface Record {
-  /** Nanoseconds since the epoch, as OTLP carries it. */
+  /** Nanoseconds since the epoch, as OTLP encodes it. */
   timeUnixNano: string;
   severityText: string;
   body: string;
@@ -119,8 +119,8 @@ export function payload(
  * The session id inside a session file path.
  *
  * pi reports a parent as the path of the session file it forked from. The
- * convention wants the previous `session.id`, so the id is taken out of the
- * path rather than the path being sent as an identifier.
+ * convention names the previous session with `session.id`, so the id is taken
+ * out of the path rather than the path being sent as an identifier.
  */
 export function sessionIdIn(path: string | undefined): string | undefined {
   if (path === undefined) return undefined;
@@ -158,7 +158,7 @@ export function projectOf(cwd: string | undefined): string | undefined {
   return cwd ? basename(cwd) : undefined;
 }
 
-/** Milliseconds since the epoch, as OTLP wants them. */
+/** Milliseconds since the epoch, as OTLP encodes them. */
 export function nanos(milliseconds: number): string {
   return String(Math.trunc(milliseconds) * 1_000_000);
 }

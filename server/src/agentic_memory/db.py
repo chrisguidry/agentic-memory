@@ -1,10 +1,10 @@
 """Writing records to Postgres.
 
 Three tables are written together. `resources` and `scopes` hold the two maps
-every signal carries, `otel_exports` holds what arrived, and `logs` holds the
+every signal has, `otel_exports` holds what arrived, and `logs` holds the
 unpacked form.
 
-Deduplication lives in the raw table rather than in the unpacked one, because
+The raw table does the deduplication, rather than the unpacked one, because
 the unpacked table is a projection of the raw one and cannot hold anything the
 raw one does not.
 """
@@ -20,13 +20,12 @@ from .otlp import raw, resource_row, row, scope_row
 log = logging.getLogger("agentic_memory")
 
 # One statement for the batch, returning only the rows that were new, so the
-# unpack knows exactly what to write and a repeat costs a write and nothing
-# else.
+# unpack writes only those and a repeat costs a write and nothing else.
 RAW_INSERT = """
-    INSERT INTO otel_exports (content_hash, resource_id, scope_id, record)
-    SELECT * FROM unnest($1::text[], $2::bigint[], $3::bigint[], $4::jsonb[])
-    ON CONFLICT (content_hash) DO NOTHING
-    RETURNING id, content_hash, received_at, resource_id, scope_id
+    INSERT INTO otel_exports (session_id, entry_id, resource_id, scope_id, record)
+    SELECT * FROM unnest($1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::jsonb[])
+    ON CONFLICT (session_id, entry_id) DO NOTHING
+    RETURNING id, session_id, entry_id, received_at, resource_id, scope_id
 """
 
 RESOURCE_UPSERT = """
@@ -159,7 +158,7 @@ async def store(pool: asyncpg.Pool, arrived: list[tuple[dict, dict, dict]]) -> d
     async with pool.acquire() as connection, connection.transaction():
         raws = [
             {
-                **raw(resource, scope, record),
+                **raw(record),
                 "resource_id": await _resource_id(connection, resource),
                 "scope_id": await _scope_id(connection, scope),
                 "payload": resource,
@@ -169,7 +168,8 @@ async def store(pool: asyncpg.Pool, arrived: list[tuple[dict, dict, dict]]) -> d
 
         fresh = await connection.fetch(
             RAW_INSERT,
-            [found["content_hash"] for found in raws],
+            [found["session_id"] for found in raws],
+            [found["entry_id"] for found in raws],
             [found["resource_id"] for found in raws],
             [found["scope_id"] for found in raws],
             [found["record"] for found in raws],
@@ -191,14 +191,14 @@ async def _unpack(
     fresh: list[asyncpg.Record],
 ) -> None:
     """Write the unpacked form of the records that were new."""
-    # The hash is what the raw insert returned, so the record it belongs to is
-    # found by the hash it was built from.
-    by_hash = {found["content_hash"]: index for index, found in enumerate(raws)}
+    # The raw insert returns the session and the entry, so the record a row
+    # belongs to is found by the pair it was built from.
+    by_entry = {(found["session_id"], found["entry_id"]): index for index, found in enumerate(raws)}
 
     picked = [
         (index, found)
         for found in fresh
-        if (index := by_hash.get(found["content_hash"])) is not None
+        if (index := by_entry.get((found["session_id"], found["entry_id"]))) is not None
     ]
     await _write_logs(
         connection,
@@ -218,9 +218,9 @@ async def _write_logs(
     """Write the unpacked rows for a batch of raw records.
 
     The record is unpacked here rather than at the door, so a change to the
-    unpack reaches records that arrived long ago. The arrival time is copied
+    unpack also applies to records already stored. The arrival time is copied
     from the export rather than taken from now, for the same reason: a rebuild
-    reads old records and must not rewrite when they arrived.
+    reads old records and must not change when they arrived.
     """
     values = []
     for resource, record, export in zip(resources, records, exports, strict=True):

@@ -18,9 +18,9 @@ def value(encoded: dict[str, Any]) -> Any:
     """Decode one OTLP attribute value.
 
     OTLP encodes a value as a one-key object whose key names the type. A key
-    this function does not know means a producer sent something the service
-    does not read, and the value is dropped rather than guessed at. A value
-    that is not an object at all is not OTLP, and it is dropped the same way.
+    the service does not recognize is dropped, along with its value, rather
+    than guessed at. A value that is not an object at all is not OTLP, and it
+    is dropped the same way.
     """
     if not isinstance(encoded, dict):
         return None
@@ -131,9 +131,15 @@ def fingerprint(*parts: dict) -> str:
     return hashlib.sha256(serialized.encode()).hexdigest()[:16]
 
 
-def content_hash(resource: dict, scope: dict, record: dict) -> str:
-    """What makes a record the same record when it arrives twice."""
-    return fingerprint(resource, scope, record)
+def entry_of(record: dict) -> tuple[Any, Any]:
+    """The session and the entry a record came from.
+
+    Two paths that capture the same session read the same entry and derive the
+    same value for it, while the context they record around it differs. This
+    pair is what deduplicates those two.
+    """
+    carried = attributes(record.get("attributes"))
+    return carried.get("session.id"), carried.get("agentic_memory.entry.id")
 
 
 def resource_row(resource: dict) -> dict[str, Any]:
@@ -154,15 +160,18 @@ def scope_row(scope: dict) -> dict[str, Any]:
     }
 
 
-def raw(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
+def raw(record: dict) -> dict[str, Any]:
     """The row the raw table takes: what arrived, verbatim.
 
     The resource and the scope are named by reference rather than repeated.
     Both are immutable and both have a table of their own, so a copy here
-    would be the third of each.
+    would be the third of each. The session and the entry come out of the
+    attributes, because they are the key the raw table deduplicates on.
     """
+    session_id, entry_id = entry_of(record)
     return {
-        "content_hash": content_hash(resource, scope, record),
+        "session_id": session_id,
+        "entry_id": entry_id,
         "record": json.dumps(record, ensure_ascii=False),
     }
 
@@ -200,7 +209,7 @@ def row(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
         "tool_name": _text("gen_ai.tool.name", carried, resource),
         # The scope is derived on the client, from the directories the session
         # is in. The service stores what it is told, because only the machine
-        # knows its own layout.
+        # has the directory layout.
         "scope_key": _text("agentic_memory.scope", carried, resource),
         "scope_kind": _text("agentic_memory.scope.kind", carried, resource),
         "repository": _text("vcs.repository.url.full", carried, resource),

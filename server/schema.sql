@@ -47,11 +47,16 @@ CREATE TABLE IF NOT EXISTS otel_exports (
     id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     received_at  timestamptz NOT NULL DEFAULT now(),
 
-    -- A hash of the resource, the scope, and the record, truncated to what
-    -- identifying a record needs. Deduplication lives here rather than in the
-    -- unpacked table, because the unpacked table is a projection of this one
-    -- and cannot hold anything this one does not.
-    content_hash text NOT NULL,
+    -- The session and the entry a record came from, lifted out of the record.
+    -- Two paths that capture the same session read the same entry and derive
+    -- the same value for it, while the context they record around it differs.
+    -- The record's own bytes cannot decide this, or a live hook and a backfill
+    -- would store one entry twice.
+    --
+    -- Null when a harness sends a record with no entry of its own. A null
+    -- never conflicts, so such a record is stored every time it arrives.
+    session_id   text,
+    entry_id     text,
 
     resource_id  bigint NOT NULL REFERENCES resources(id),
     scope_id     bigint NOT NULL REFERENCES scopes(id),
@@ -63,8 +68,8 @@ CREATE TABLE IF NOT EXISTS otel_exports (
 
 -- The only index the raw table needs, and the only thing that makes it
 -- cheaper to send a record twice.
-CREATE UNIQUE INDEX IF NOT EXISTS otel_exports_content
-    ON otel_exports (content_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS otel_exports_entry
+    ON otel_exports (session_id, entry_id);
 
 -- Small, because it covers only the rows the unpack has not read.
 CREATE INDEX IF NOT EXISTS otel_exports_pending

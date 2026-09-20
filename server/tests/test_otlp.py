@@ -11,7 +11,7 @@ import pytest
 from agentic_memory.otlp import (
     attributes,
     clean,
-    content_hash,
+    entry_of,
     fingerprint,
     raw,
     resource_row,
@@ -46,6 +46,22 @@ def text(key: str, value: str) -> dict:
 
 def whole(key: str, value: int) -> dict:
     return {"key": key, "value": {"intValue": str(value)}}
+
+
+def carrying(revision: str, entry: str = "e1") -> dict:
+    """A record from one entry, with context that changes between captures.
+
+    The revision stands for everything a path records about the repository
+    around a message rather than about the message itself.
+    """
+    return {
+        "body": {"stringValue": "hi"},
+        "attributes": [
+            text("session.id", "s1"),
+            text("agentic_memory.entry.id", entry),
+            text("vcs.ref.head.revision", revision),
+        ],
+    }
 
 
 class TestBody:
@@ -184,17 +200,28 @@ class TestClean:
         assert "\x00" not in only(payload)["body"]
 
         resource, scope, record = next(walk(payload))
-        assert "\x00" not in raw(resource, scope, record)["record"]
+        assert "\x00" not in raw(record)["record"]
 
 
 class TestTheSplit:
-    def test_the_raw_row_keeps_the_record_whole_and_names_the_maps(self):
-        payload = logs({"body": {"stringValue": "hi"}, "timeUnixNano": "1767225600000000000"})
-        resource, scope, record = next(walk(payload))
-        found = raw(resource, scope, record)
-        # The maps have tables of their own, so the raw row names them by
-        # reference rather than repeating them.
-        assert set(found) == {"content_hash", "record"}
+    def test_the_raw_row_keeps_the_record_whole_and_names_the_entry(self):
+        payload = logs(
+            {
+                "body": {"stringValue": "hi"},
+                "timeUnixNano": "1767225600000000000",
+                "attributes": [
+                    text("session.id", "s1"),
+                    text("agentic_memory.entry.id", "e1"),
+                ],
+            }
+        )
+        _, _, record = next(walk(payload))
+        found = raw(record)
+        # The maps have tables of their own, and the session and the entry are
+        # the deduplication key, so the raw row names both rather than
+        # repeating them.
+        assert set(found) == {"session_id", "entry_id", "record"}
+        assert (found["session_id"], found["entry_id"]) == ("s1", "e1")
 
     def test_the_unpacked_row_carries_the_lifted_fields(self):
         found = only(
@@ -218,15 +245,22 @@ class TestTheSplit:
         assert "scope_name" not in found
         assert "scope_attributes" not in found
 
-    def test_the_same_record_hashes_the_same_way_twice(self):
-        payload = logs({"body": {"stringValue": "hi"}})
-        resource, scope, record = next(walk(payload))
-        assert content_hash(resource, scope, record) == content_hash(resource, scope, record)
+    def test_two_paths_capturing_one_entry_name_it_the_same_way(self):
+        # A live hook and a backfill read the same entry and record different
+        # context around it. They derive the same identity, so the record is
+        # stored once.
+        live = next(walk(logs(carrying("aaa"))))
+        swept = next(walk(logs(carrying("bbb"))))
+        assert entry_of(live[2]) == entry_of(swept[2])
 
-    def test_a_different_record_hashes_differently(self):
-        first = next(walk(logs({"body": {"stringValue": "one"}})))
-        second = next(walk(logs({"body": {"stringValue": "two"}})))
-        assert content_hash(*first) != content_hash(*second)
+    def test_two_entries_are_named_differently(self):
+        first = next(walk(logs(carrying("aaa", entry="e1"))))
+        second = next(walk(logs(carrying("aaa", entry="e2"))))
+        assert entry_of(first[2]) != entry_of(second[2])
+
+    def test_a_record_with_no_entry_of_its_own_has_no_identity(self):
+        _, _, record = next(walk(logs({"body": {"stringValue": "hi"}})))
+        assert entry_of(record) == (None, None)
 
 
 class TestTheMaps:

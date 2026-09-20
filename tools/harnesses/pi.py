@@ -4,7 +4,7 @@ One JSONL file per session, named `<timestamp>_<session id>.jsonl`, inside a
 directory named for the working directory it belongs to. The first line is
 the session header, and every line after it is an entry in a tree.
 
-An assistant message carries text blocks, thinking blocks, and tool calls, so
+An assistant message has text blocks, thinking blocks, and tool calls, so
 one entry can produce more than one record. The entry id and the kind together
 name each record, which is the same identifier `pi/index.ts` derives, so a
 session both paths captured is stored once.
@@ -118,7 +118,7 @@ def _message(
             ],
         )
         # Reasoning is its own record. It is the part other harnesses leave
-        # out, and a later pass wants to read it apart from the answer.
+        # out, and a later pass reads it apart from the answer.
         for index, block in enumerate(
             found for found in blocks if found.get("type") == "thinking"
         ):
@@ -132,6 +132,24 @@ def _message(
                 extra=[
                     attribute("gen_ai.operation.name", "chat"),
                     attribute("gen_ai.request.model", message.get("model")),
+                ],
+            )
+
+# A tool call is its own record, so a call and its result join on the call
+        # id. pi puts the call in the assistant message.
+        for block in (found for found in blocks if found.get("type") == "toolCall"):
+            yield session.record(
+                entry=entry_id,
+                kind="tool_call",
+                actor="agent",
+                body=json.dumps(block.get("arguments", {})),
+                when_ms=when,
+                within=str(block.get("id")),
+                extra=[
+                    attribute("gen_ai.operation.name", "execute_tool"),
+                    attribute("gen_ai.tool.name", block.get("name")),
+                    attribute("gen_ai.tool.call.id", block.get("id")),
+                    attribute("gen_ai.tool.type", "function"),
                 ],
             )
 
