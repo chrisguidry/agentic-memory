@@ -121,22 +121,48 @@ def _fraction(attribute: str, record: dict, resource: dict) -> float | None:
         return None
 
 
-def content_hash(resource: dict, scope: dict, record: dict) -> str:
-    """What makes a record the same record when it arrives twice.
+def fingerprint(*parts: dict) -> str:
+    """A stable name for a map.
 
-    Truncated, because identifying a record is all it has to do and the raw
-    table indexes it.
+    Truncated, because finding an identical map is all it has to do, and the
+    unique index that finds it is on this value.
     """
-    serialized = json.dumps([resource, scope, record], sort_keys=True, ensure_ascii=False)
+    serialized = json.dumps(parts, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(serialized.encode()).hexdigest()[:16]
 
 
+def content_hash(resource: dict, scope: dict, record: dict) -> str:
+    """What makes a record the same record when it arrives twice."""
+    return fingerprint(resource, scope, record)
+
+
+def resource_row(resource: dict) -> dict[str, Any]:
+    """The row the resources table takes."""
+    return {
+        "fingerprint": fingerprint(resource),
+        "resource": json.dumps(resource, ensure_ascii=False),
+    }
+
+
+def scope_row(scope: dict) -> dict[str, Any]:
+    """The row the scopes table takes."""
+    return {
+        "fingerprint": fingerprint(scope),
+        "name": scope.get("name"),
+        "version": scope.get("version"),
+        "attributes": json.dumps(attributes(scope.get("attributes")), ensure_ascii=False),
+    }
+
+
 def raw(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
-    """The row the raw table takes: what arrived, verbatim."""
+    """The row the raw table takes: what arrived, verbatim.
+
+    The resource and the scope are named by reference rather than repeated.
+    Both are immutable and both have a table of their own, so a copy here
+    would be the third of each.
+    """
     return {
         "content_hash": content_hash(resource, scope, record),
-        "resource": json.dumps(resource, ensure_ascii=False),
-        "scope": json.dumps(scope, ensure_ascii=False),
         "record": json.dumps(record, ensure_ascii=False),
     }
 
@@ -144,8 +170,9 @@ def raw(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
 def row(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
     """The row the unpacked table takes.
 
-    The maps stay whole beside the fields lifted out of them, so the maps
-    remain the source of truth and a query does not have to walk one.
+    The attribute map stays whole beside the fields lifted out of it, so the
+    map remains the source of truth and a query does not have to walk one.
+    The resource and the scope are left to their own tables.
     """
     carried = attributes(record.get("attributes"))
 
@@ -157,10 +184,6 @@ def row(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
         "trace_id": record.get("traceId"),
         "span_id": record.get("spanId"),
         "body": _body(record),
-        "resource": json.dumps(resource, ensure_ascii=False),
-        "scope_name": scope.get("name"),
-        "scope_version": scope.get("version"),
-        "scope_attributes": json.dumps(attributes(scope.get("attributes")), ensure_ascii=False),
         "session_id": _text("session.id", carried, resource),
         "previous_session": _text("session.previous_id", carried, resource),
         "entry_id": _text("agentic_memory.entry.id", carried, resource),

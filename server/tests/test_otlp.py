@@ -8,7 +8,17 @@ import json
 
 import pytest
 
-from agentic_memory.otlp import attributes, clean, content_hash, raw, row, walk
+from agentic_memory.otlp import (
+    attributes,
+    clean,
+    content_hash,
+    fingerprint,
+    raw,
+    resource_row,
+    row,
+    scope_row,
+    walk,
+)
 
 
 def logs(record: dict, resource: dict | None = None) -> dict:
@@ -178,13 +188,15 @@ class TestClean:
 
 
 class TestTheSplit:
-    def test_the_raw_row_keeps_the_envelope_whole(self):
+    def test_the_raw_row_keeps_the_record_whole_and_names_the_maps(self):
         payload = logs({"body": {"stringValue": "hi"}, "timeUnixNano": "1767225600000000000"})
         resource, scope, record = next(walk(payload))
         found = raw(resource, scope, record)
-        assert set(found) == {"content_hash", "resource", "scope", "record"}
+        # The maps have tables of their own, so the raw row names them by
+        # reference rather than repeating them.
+        assert set(found) == {"content_hash", "record"}
 
-    def test_the_unpacked_row_carries_the_maps_and_the_lifted_fields(self):
+    def test_the_unpacked_row_carries_the_lifted_fields(self):
         found = only(
             logs(
                 {
@@ -198,8 +210,13 @@ class TestTheSplit:
         assert found["session_id"] == "s1"
         assert found["kind"] == "prompt"
         assert found["machine"] == "a-machine"
-        assert "host.name" in found["resource"]
         assert "session.id" in found["attributes"]
+
+    def test_the_unpacked_row_leaves_the_maps_to_their_tables(self):
+        found = only(logs({"body": {"stringValue": "hi"}}))
+        assert "resource" not in found
+        assert "scope_name" not in found
+        assert "scope_attributes" not in found
 
     def test_the_same_record_hashes_the_same_way_twice(self):
         payload = logs({"body": {"stringValue": "hi"}})
@@ -210,6 +227,30 @@ class TestTheSplit:
         first = next(walk(logs({"body": {"stringValue": "one"}})))
         second = next(walk(logs({"body": {"stringValue": "two"}})))
         assert content_hash(*first) != content_hash(*second)
+
+
+class TestTheMaps:
+    def test_a_resource_row_holds_its_map_and_a_name_for_it(self):
+        resource, _, _ = next(walk(logs({"body": {}}, resource=[text("host.name", "a-machine")])))
+        found = resource_row(resource)
+        assert found["fingerprint"] == fingerprint(resource)
+        assert "a-machine" in found["resource"]
+
+    def test_a_scope_row_lifts_the_name_and_keeps_the_attributes(self):
+        _, scope, _ = next(walk(logs({"body": {}})))
+        found = scope_row(scope)
+        assert found["fingerprint"] == fingerprint(scope)
+        assert set(found) == {"fingerprint", "name", "version", "attributes"}
+
+    def test_two_identical_maps_get_the_same_name(self):
+        first, _, _ = next(walk(logs({"body": {}}, resource=[text("host.name", "a-machine")])))
+        second, _, _ = next(walk(logs({"body": {}}, resource=[text("host.name", "a-machine")])))
+        assert fingerprint(first) == fingerprint(second)
+
+    def test_two_different_maps_get_different_names(self):
+        first, _, _ = next(walk(logs({"body": {}}, resource=[text("host.name", "a-machine")])))
+        second, _, _ = next(walk(logs({"body": {}}, resource=[text("host.name", "another")])))
+        assert fingerprint(first) != fingerprint(second)
 
 
 class TestEnvelopes:

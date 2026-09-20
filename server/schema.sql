@@ -1,4 +1,11 @@
--- Two tables, because two things are being asked of the same bytes.
+-- Four tables, because the record has four parts with different lifetimes.
+--
+-- `resources` and `scopes` are the two maps every OpenTelemetry signal
+-- carries, whatever the signal is. A log record, a span, and a metric all
+-- point at the same resource and the same instrumentation scope, so the maps
+-- get a table each rather than a column each in every table that follows.
+-- There are two distinct values of each today, and they are immutable, so the
+-- join is a lookup and the rows are tiny.
 --
 -- `otel_exports` is what arrived, verbatim, and it is the permanent copy. It
 -- exists so a change to the unpack can be replayed against records already
@@ -7,10 +14,37 @@
 --
 -- `logs` is the unpacked form, and it is what a query reads. It takes the
 -- shape ClickHouse gives OpenTelemetry logs: identity columns flattened beside
--- the body and the attribute maps.
+-- the body, with the hot fields lifted out of the attribute map so a query
+-- does not have to walk one.
+
+CREATE TABLE IF NOT EXISTS resources (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    -- A hash of the map, so an identical resource is found rather than
+    -- written again.
+    fingerprint text NOT NULL,
+    resource    jsonb NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS resources_fingerprint
+    ON resources (fingerprint);
+
+CREATE TABLE IF NOT EXISTS scopes (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    fingerprint text NOT NULL,
+
+    -- Kept as columns as well as inside the map, because the name is what
+    -- tells one producer from another and it is worth reading directly.
+    name        text,
+    version     text,
+    attributes  jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS scopes_fingerprint
+    ON scopes (fingerprint);
 
 CREATE TABLE IF NOT EXISTS otel_exports (
-    id           bigserial PRIMARY KEY,
+    id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     received_at  timestamptz NOT NULL DEFAULT now(),
 
     -- A hash of the resource, the scope, and the record, truncated to what
@@ -19,8 +53,8 @@ CREATE TABLE IF NOT EXISTS otel_exports (
     -- and cannot hold anything this one does not.
     content_hash text NOT NULL,
 
-    resource     jsonb NOT NULL,
-    scope        jsonb NOT NULL,
+    resource_id  bigint NOT NULL REFERENCES resources(id),
+    scope_id     bigint NOT NULL REFERENCES scopes(id),
     record       jsonb NOT NULL,
 
     -- Null until the unpack has read it, so the unpack knows what is new.
@@ -38,9 +72,14 @@ CREATE INDEX IF NOT EXISTS otel_exports_pending
     WHERE unpacked_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS logs (
-    id                bigserial PRIMARY KEY,
+    id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     export_id         bigint NOT NULL REFERENCES otel_exports(id),
     received_at       timestamptz NOT NULL,
+
+    -- The resource is reachable through the export, and carried here anyway,
+    -- because it is eight bytes and it means a query never has to join for it.
+    resource_id       bigint NOT NULL REFERENCES resources(id),
+    scope_id          bigint NOT NULL REFERENCES scopes(id),
 
     -- identity, flattened, the way every OpenTelemetry store does it
     occurred_at       timestamptz,
@@ -50,17 +89,13 @@ CREATE TABLE IF NOT EXISTS logs (
     trace_id          text,
     span_id           text,
 
-    -- the payload
+    -- the payload. The attribute map stays whole, because it is the source of
+    -- truth for everything lifted below it.
     body              text,
     attributes        jsonb NOT NULL,
-    resource          jsonb NOT NULL,
-    scope_name        text,
-    scope_version     text,
-    scope_attributes  jsonb NOT NULL DEFAULT '{}'::jsonb,
 
     -- the hot fields, lifted out of the maps so a query does not have to walk
-    -- one. They are derivations of the maps above, and the maps stay the
-    -- source of truth.
+    -- one
     session_id        text,
     previous_session  text,
     entry_id          text,

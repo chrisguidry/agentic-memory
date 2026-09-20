@@ -1,8 +1,8 @@
 """Writing records to Postgres.
 
-Two tables are written together. `otel_exports` takes what arrived, and a
-record that arrives twice lands on its unique index and is not written again.
-`logs` takes the unpacked form of whatever was new.
+Three tables are written together. `resources` and `scopes` hold the two maps
+every signal carries, `otel_exports` holds what arrived, and `logs` holds the
+unpacked form.
 
 Deduplication lives in the raw table rather than in the unpacked one, because
 the unpacked table is a projection of the raw one and cannot hold anything the
@@ -15,7 +15,7 @@ from typing import Any
 
 import asyncpg
 
-from .otlp import raw, row
+from .otlp import raw, resource_row, row, scope_row
 
 log = logging.getLogger("agentic_memory")
 
@@ -23,15 +23,39 @@ log = logging.getLogger("agentic_memory")
 # unpack knows exactly what to write and a repeat costs a write and nothing
 # else.
 RAW_INSERT = """
-    INSERT INTO otel_exports (content_hash, resource, scope, record)
-    SELECT * FROM unnest($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[])
+    INSERT INTO otel_exports (content_hash, resource_id, scope_id, record)
+    SELECT * FROM unnest($1::text[], $2::bigint[], $3::bigint[], $4::jsonb[])
     ON CONFLICT (content_hash) DO NOTHING
-    RETURNING id, content_hash, received_at
+    RETURNING id, content_hash, received_at, resource_id, scope_id
 """
+
+RESOURCE_UPSERT = """
+    INSERT INTO resources (fingerprint, resource)
+    VALUES ($1, $2::jsonb)
+    ON CONFLICT (fingerprint) DO NOTHING
+"""
+
+RESOURCE_FIND = "SELECT id FROM resources WHERE fingerprint = $1"
+
+SCOPE_UPSERT = """
+    INSERT INTO scopes (fingerprint, name, version, attributes)
+    VALUES ($1, $2, $3, $4::jsonb)
+    ON CONFLICT (fingerprint) DO NOTHING
+"""
+
+SCOPE_FIND = "SELECT id FROM scopes WHERE fingerprint = $1"
+
+# A resource map and a scope map are immutable and there are two of each, so
+# remembering the ids costs nothing and keeps the lookup off the database for
+# everything but the first sighting of each.
+_resource_ids: dict[str, int] = {}
+_scope_ids: dict[str, int] = {}
 
 LOG_COLUMNS = (
     "export_id",
     "received_at",
+    "resource_id",
+    "scope_id",
     "occurred_at",
     "observed_at",
     "severity",
@@ -40,10 +64,6 @@ LOG_COLUMNS = (
     "span_id",
     "body",
     "attributes",
-    "resource",
-    "scope_name",
-    "scope_version",
-    "scope_attributes",
     "session_id",
     "previous_session",
     "entry_id",
@@ -73,7 +93,7 @@ LOG_COLUMNS = (
     "error_type",
 )
 
-JSONB = ("attributes", "resource", "scope_attributes")
+JSONB = ("attributes",)
 
 PLACEHOLDERS = ", ".join(
     f"${index}::jsonb" if column in JSONB else f"${index}"
@@ -95,6 +115,38 @@ SUMMARY = (
 )
 
 
+async def _resource_id(connection: asyncpg.Connection, resource: dict) -> int:
+    """The id of a resource map, written if this is the first sighting."""
+    found = resource_row(resource)
+    known = _resource_ids.get(found["fingerprint"])
+    if known is not None:
+        return known
+
+    await connection.execute(RESOURCE_UPSERT, found["fingerprint"], found["resource"])
+    identifier = await connection.fetchval(RESOURCE_FIND, found["fingerprint"])
+    _resource_ids[found["fingerprint"]] = identifier
+    return identifier
+
+
+async def _scope_id(connection: asyncpg.Connection, scope: dict) -> int:
+    """The id of a scope map, written if this is the first sighting."""
+    found = scope_row(scope)
+    known = _scope_ids.get(found["fingerprint"])
+    if known is not None:
+        return known
+
+    await connection.execute(
+        SCOPE_UPSERT,
+        found["fingerprint"],
+        found["name"],
+        found["version"],
+        found["attributes"],
+    )
+    identifier = await connection.fetchval(SCOPE_FIND, found["fingerprint"])
+    _scope_ids[found["fingerprint"]] = identifier
+    return identifier
+
+
 async def store(pool: asyncpg.Pool, arrived: list[tuple[dict, dict, dict]]) -> dict[str, int]:
     """Write a batch and report what happened to it.
 
@@ -102,33 +154,39 @@ async def store(pool: asyncpg.Pool, arrived: list[tuple[dict, dict, dict]]) -> d
     walk yields.
     """
     if not arrived:
-        return {"received": 0, "inserted": 0, "repeated": 0, "failed": 0}
-
-    raws = [raw(resource, scope, record) for resource, scope, record in arrived]
+        return {"received": 0, "inserted": 0, "repeated": 0}
 
     async with pool.acquire() as connection, connection.transaction():
+        raws = [
+            {
+                **raw(resource, scope, record),
+                "resource_id": await _resource_id(connection, resource),
+                "scope_id": await _scope_id(connection, scope),
+                "payload": resource,
+            }
+            for resource, scope, record in arrived
+        ]
+
         fresh = await connection.fetch(
             RAW_INSERT,
             [found["content_hash"] for found in raws],
-            [found["resource"] for found in raws],
-            [found["scope"] for found in raws],
+            [found["resource_id"] for found in raws],
+            [found["scope_id"] for found in raws],
             [found["record"] for found in raws],
         )
 
         if fresh:
-            await _unpack(connection, arrived, raws, fresh)
+            await _unpack(connection, raws, fresh)
 
     return {
         "received": len(arrived),
         "inserted": len(fresh),
         "repeated": len(arrived) - len(fresh),
-        "failed": 0,
     }
 
 
 async def _unpack(
     connection: asyncpg.Connection,
-    arrived: list[tuple[dict, dict, dict]],
     raws: list[dict[str, Any]],
     fresh: list[asyncpg.Record],
 ) -> None:
@@ -138,34 +196,39 @@ async def _unpack(
     by_hash = {found["content_hash"]: index for index, found in enumerate(raws)}
 
     picked = [
-        (index, found["id"], found["received_at"])
+        (index, found)
         for found in fresh
         if (index := by_hash.get(found["content_hash"])) is not None
     ]
     await _write_logs(
         connection,
-        [arrived[index] for index, _, _ in picked],
-        [(export_id, received) for _, export_id, received in picked],
+        [raws[index]["payload"] for index, _ in picked],
+        [raws[index]["record"] for index, _ in picked],
+        [found for _, found in picked],
     )
     await connection.execute(MARK_UNPACKED, [found["id"] for found in fresh])
 
 
 async def _write_logs(
     connection: asyncpg.Connection,
-    arrived: list[tuple[dict, dict, dict]],
-    exports: list[tuple[int, Any]],
+    resources: list[dict],
+    records: list[str],
+    exports: list[asyncpg.Record],
 ) -> int:
-    """Write the unpacked rows for a batch of arrived records.
+    """Write the unpacked rows for a batch of raw records.
 
-    The arrival time is copied from the export rather than taken from now,
-    because a rebuild reads records that arrived long ago and a rebuild must
-    not rewrite when they did.
+    The record is unpacked here rather than at the door, so a change to the
+    unpack reaches records that arrived long ago. The arrival time is copied
+    from the export rather than taken from now, for the same reason: a rebuild
+    reads old records and must not rewrite when they arrived.
     """
     values = []
-    for (resource, scope, record), (export_id, received) in zip(arrived, exports, strict=True):
-        unpacked = row(resource, scope, record)
-        unpacked["export_id"] = export_id
-        unpacked["received_at"] = received
+    for resource, record, export in zip(resources, records, exports, strict=True):
+        unpacked = row(resource, {}, json.loads(record))
+        unpacked["export_id"] = export["id"]
+        unpacked["received_at"] = export["received_at"]
+        unpacked["resource_id"] = export["resource_id"]
+        unpacked["scope_id"] = export["scope_id"]
         values.append(tuple(unpacked.get(column) for column in LOG_COLUMNS))
 
     if values:
@@ -188,8 +251,10 @@ async def rebuild(pool: asyncpg.Pool, batch: int = 500) -> dict[str, int]:
     while True:
         async with pool.acquire() as connection:
             found = await connection.fetch(
-                "SELECT id, received_at, resource, scope, record FROM otel_exports "
-                "WHERE id > $1 ORDER BY id LIMIT $2",
+                "SELECT e.id, e.received_at, e.resource_id, e.scope_id, e.record, "
+                "r.resource AS payload "
+                "FROM otel_exports e JOIN resources r ON r.id = e.resource_id "
+                "WHERE e.id > $1 ORDER BY e.id LIMIT $2",
                 last,
                 batch,
             )
@@ -197,15 +262,12 @@ async def rebuild(pool: asyncpg.Pool, batch: int = 500) -> dict[str, int]:
                 break
 
             last = found[-1]["id"]
-            arrived = [
-                (json.loads(row["resource"]), json.loads(row["scope"]), json.loads(row["record"]))
-                for row in found
-            ]
             async with connection.transaction():
                 written += await _write_logs(
                     connection,
-                    arrived,
-                    [(row["id"], row["received_at"]) for row in found],
+                    [json.loads(row["payload"]) for row in found],
+                    [row["record"] for row in found],
+                    found,
                 )
                 await connection.execute(MARK_UNPACKED, [row["id"] for row in found])
 
@@ -221,6 +283,8 @@ async def count(pool: asyncpg.Pool) -> dict[str, int]:
             "pending": await connection.fetchval(
                 "SELECT count(*) FROM otel_exports WHERE unpacked_at IS NULL"
             ),
+            "resources": await connection.fetchval("SELECT count(*) FROM resources"),
+            "scopes": await connection.fetchval("SELECT count(*) FROM scopes"),
         }
 
 
