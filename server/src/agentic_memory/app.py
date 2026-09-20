@@ -1,7 +1,7 @@
 """The service.
 
-It receives OTLP over HTTP and writes what arrives to Postgres. It derives
-nothing, and it calls no model.
+It receives OTLP over HTTP, writes what arrived to the raw table, and unpacks
+it into the queryable one. It derives nothing, and it calls no model.
 """
 
 import logging
@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI, Query, Request
 
 from . import db
-from .otlp import row, walk
+from .otlp import walk
 from .settings import get_settings
 
 log = logging.getLogger("agentic_memory")
@@ -35,27 +35,22 @@ app = FastAPI(title="agentic-memory", lifespan=lifespan)
 @app.get("/health")
 async def health(request: Request) -> dict:
     """Report whether the store answers, and how much it holds."""
-    return {"status": "ok", "records": await db.count(request.app.state.pool)}
+    return {"status": "ok", **await db.count(request.app.state.pool)}
 
 
 @app.post("/v1/logs")
 async def logs(request: Request) -> dict:
     """The OTLP/HTTP endpoint for the logs signal."""
     payload = await request.json()
-    rows = [row(resource, scope, record) for resource, scope, record in walk(payload)]
-    inserted, repeated, failed = await db.store(request.app.state.pool, rows)
-    return {
-        "partialSuccess": {},
-        "inserted": inserted,
-        "repeated": repeated,
-        "failed": failed,
-    }
+    arrived = list(walk(payload))
+    counted = await db.store(request.app.state.pool, arrived)
+    return {"partialSuccess": {}, **counted}
 
 
 @app.get("/records")
 async def records(
     request: Request,
-    scope: str | None = None,
+    scope_key: str | None = None,
     kind: str | None = None,
     session_id: str | None = None,
     harness: str | None = None,
@@ -64,12 +59,22 @@ async def records(
     """The most recent records, for looking at what arrived."""
     return await db.recent(
         request.app.state.pool,
-        scope=scope,
+        scope_key=scope_key,
         kind=kind,
         session_id=session_id,
         harness=harness,
         limit=limit,
     )
+
+
+@app.post("/rebuild")
+async def rebuild(request: Request) -> dict:
+    """Throw the unpacked table away and build it again from the raw one.
+
+    This is what the raw table exists for. The extraction can change and the
+    record does not have to be sent again.
+    """
+    return await db.rebuild(request.app.state.pool)
 
 
 def main() -> None:

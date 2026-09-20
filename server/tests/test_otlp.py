@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from agentic_memory.otlp import attributes, clean, row, walk
+from agentic_memory.otlp import attributes, clean, content_hash, raw, row, walk
 
 
 def logs(record: dict, resource: dict | None = None) -> dict:
@@ -170,9 +170,46 @@ class TestClean:
     def test_a_record_carrying_a_nul_reaches_the_store(self):
         # Postgres refuses U+0000 in both text and jsonb, so a transcript
         # that carries one has to be cleaned before it is stored.
-        found = only(logs({"body": {"stringValue": "before\x00after"}}))
-        assert "\x00" not in found["body"]
-        assert "\x00" not in found["record"]
+        payload = logs({"body": {"stringValue": "before\x00after"}})
+        assert "\x00" not in only(payload)["body"]
+
+        resource, scope, record = next(walk(payload))
+        assert "\x00" not in raw(resource, scope, record)["record"]
+
+
+class TestTheSplit:
+    def test_the_raw_row_keeps_the_envelope_whole(self):
+        payload = logs({"body": {"stringValue": "hi"}, "timeUnixNano": "1767225600000000000"})
+        resource, scope, record = next(walk(payload))
+        found = raw(resource, scope, record)
+        assert set(found) == {"content_hash", "resource", "scope", "record"}
+
+    def test_the_unpacked_row_carries_the_maps_and_the_lifted_fields(self):
+        found = only(
+            logs(
+                {
+                    "body": {"stringValue": "hi"},
+                    "attributes": [text("session.id", "s1"), text("agentic_memory.kind", "prompt")],
+                },
+                resource=[text("host.name", "a-machine")],
+            )
+        )
+        assert found["body"] == "hi"
+        assert found["session_id"] == "s1"
+        assert found["kind"] == "prompt"
+        assert found["machine"] == "a-machine"
+        assert "host.name" in found["resource"]
+        assert "session.id" in found["attributes"]
+
+    def test_the_same_record_hashes_the_same_way_twice(self):
+        payload = logs({"body": {"stringValue": "hi"}})
+        resource, scope, record = next(walk(payload))
+        assert content_hash(resource, scope, record) == content_hash(resource, scope, record)
+
+    def test_a_different_record_hashes_differently(self):
+        first = next(walk(logs({"body": {"stringValue": "one"}})))
+        second = next(walk(logs({"body": {"stringValue": "two"}})))
+        assert content_hash(*first) != content_hash(*second)
 
 
 class TestEnvelopes:

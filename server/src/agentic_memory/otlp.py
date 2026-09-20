@@ -7,6 +7,7 @@ into a row the service can store.
 The attribute names it reads are listed in `docs/otel-conventions.md`.
 """
 
+import hashlib
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -120,18 +121,46 @@ def _fraction(attribute: str, record: dict, resource: dict) -> float | None:
         return None
 
 
+def content_hash(resource: dict, scope: dict, record: dict) -> str:
+    """What makes a record the same record when it arrives twice.
+
+    Truncated, because identifying a record is all it has to do and the raw
+    table indexes it.
+    """
+    serialized = json.dumps([resource, scope, record], sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(serialized.encode()).hexdigest()[:16]
+
+
+def raw(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
+    """The row the raw table takes: what arrived, verbatim."""
+    return {
+        "content_hash": content_hash(resource, scope, record),
+        "resource": json.dumps(resource, ensure_ascii=False),
+        "scope": json.dumps(scope, ensure_ascii=False),
+        "record": json.dumps(record, ensure_ascii=False),
+    }
+
+
 def row(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
-    """Turn one OTLP log record into a row, keeping the envelope whole."""
+    """The row the unpacked table takes.
+
+    The maps stay whole beside the fields lifted out of them, so the maps
+    remain the source of truth and a query does not have to walk one.
+    """
     carried = attributes(record.get("attributes"))
 
     return {
-        "resource": json.dumps(resource, ensure_ascii=False),
-        "instrumentation_scope": json.dumps(scope, ensure_ascii=False),
-        "record": json.dumps(record, ensure_ascii=False),
         "occurred_at": _moment(record.get("timeUnixNano")),
         "observed_at": _moment(record.get("observedTimeUnixNano")),
         "severity": record.get("severityText"),
+        "severity_number": record.get("severityNumber"),
+        "trace_id": record.get("traceId"),
+        "span_id": record.get("spanId"),
         "body": _body(record),
+        "resource": json.dumps(resource, ensure_ascii=False),
+        "scope_name": scope.get("name"),
+        "scope_version": scope.get("version"),
+        "scope_attributes": json.dumps(attributes(scope.get("attributes")), ensure_ascii=False),
         "session_id": _text("session.id", carried, resource),
         "previous_session": _text("session.previous_id", carried, resource),
         "entry_id": _text("agentic_memory.entry.id", carried, resource),
@@ -149,7 +178,7 @@ def row(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
         # The scope is derived on the client, from the directories the session
         # is in. The service stores what it is told, because only the machine
         # knows its own layout.
-        "scope": _text("agentic_memory.scope", carried, resource),
+        "scope_key": _text("agentic_memory.scope", carried, resource),
         "scope_kind": _text("agentic_memory.scope.kind", carried, resource),
         "repository": _text("vcs.repository.url.full", carried, resource),
         "owner": _text("vcs.owner.name", carried, resource),
@@ -162,7 +191,5 @@ def row(resource: dict, scope: dict, record: dict) -> dict[str, Any]:
         "reasoning_tokens": _whole("gen_ai.usage.reasoning.output_tokens", carried, resource),
         "cost_total": _fraction("agentic_memory.cost.total", carried, resource),
         "error_type": _text("error.type", carried, resource),
-        "trace_id": record.get("traceId"),
-        "span_id": record.get("spanId"),
         "attributes": json.dumps(carried, ensure_ascii=False),
     }
