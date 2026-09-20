@@ -1,0 +1,71 @@
+# A local stack: the store, and the service that writes to it.
+#
+# The host port for Postgres is 5433 rather than 5432 so this container never
+# collides with a Postgres a person runs for something else. Inside the
+# network the service reaches it on the usual 5432.
+#
+# The network declares its own subnet because this host's Docker daemon
+# configures a single-address pool, so only one project can draw a network
+# from it. 10.252.0.0/24 is clear of the LAN, the WireGuard tunnel, the
+# Docker bridge, and the other project's network.
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: agentic_memory
+      POSTGRES_USER: agentic_memory
+      POSTGRES_PASSWORD: agentic_memory
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./server/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic_memory -d agentic_memory"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  server:
+    build: ./server
+    environment:
+      AGENTIC_MEMORY_DATABASE_URL: postgresql://agentic_memory:agentic_memory@postgres:5432/agentic_memory
+      AGENTIC_MEMORY_HOST: 0.0.0.0
+      AGENTIC_MEMORY_PORT: "4318"
+    ports:
+      - "4318:4318"
+    volumes:
+      # Read-only, so the container never writes into the working tree.
+      - ./server/src:/app/src:ro
+    command:
+      - uvicorn
+      - agentic_memory.app:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "4318"
+      - --reload
+      - --reload-dir
+      - /app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4318/health').status == 200 else 1)"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.252.0.0/24
