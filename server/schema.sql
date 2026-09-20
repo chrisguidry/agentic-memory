@@ -144,6 +144,18 @@ CREATE INDEX IF NOT EXISTS logs_scope
 CREATE INDEX IF NOT EXISTS logs_body_search
     ON logs USING gin (to_tsvector('english', body));
 
+-- Containment over the attribute map, for the keys that are not lifted into
+-- columns. jsonb_path_ops rather than the default jsonb_ops, because every
+-- query here is containment and the default also indexes keys and values,
+-- which costs 146 MB against 63 for a capability nothing asks for.
+--
+-- This buys coverage, not speed. A btree on one of these keys is 9 MB and
+-- answers that key just as fast, so the reason to keep it is the handful of
+-- high-cardinality ids worth looking up exactly. The low-cardinality keys are
+-- not worth indexing anywhere: the branch a record is on has four values.
+CREATE INDEX IF NOT EXISTS logs_attributes
+    ON logs USING gin (attributes jsonb_path_ops);
+
 CREATE INDEX IF NOT EXISTS logs_kind
     ON logs (kind);
 
