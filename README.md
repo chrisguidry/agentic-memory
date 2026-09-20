@@ -24,6 +24,12 @@ attributes hold the provenance. Every attribute name comes from
 OpenTelemetry, and [`docs/otel-conventions.md`](docs/otel-conventions.md)
 lists them with their sources.
 
+Each record carries a scope, which says what the session was about:
+`github.com/acme/widget` for a repository, `github.com/acme` for the
+organization above it. The client derives the scope from the directories
+the session is in, and [`plans/00-design.md`](plans/00-design.md) holds the
+scheme.
+
 ## Running it
 
 ```bash
@@ -41,34 +47,23 @@ source is mounted into the container and uvicorn reloads it, so an edit to
 
 ```bash
 curl -s http://127.0.0.1:4318/health
-curl -s "http://127.0.0.1:4318/records?scope=github.com/liken-sh&limit=5"
+curl -s "http://127.0.0.1:4318/records?scope=github.com/acme&limit=5"
 ```
 
-## What is loaded
+## What a backfill produces
 
-One machine's pi sessions, read on 2026-09-20.
+`tools/backfill.py` reads the session files pi already wrote and sends them
+as OTLP log records. A run over several months of one machine's sessions
+produced records carrying:
 
-| | |
-|---|---|
-| Records | 35,388 |
-| Sessions | 229 |
-| Scopes | 12 |
-| First and last | 2026-02-20 to 2026-09-20 |
-| On disk | 222 MB |
-| Tokens | 48.6M in, 6.6M out, 1.31B cache reads |
-| Cost recorded | $277.01 |
+- the session and the entry inside it, which make a re-send harmless
+- the scope, derived from the directory the session started in
+- the model, the tokens, and the cost of each response
+- the chain back to the person, for a session a subagent ran
 
-| Kind | Records |
-|---|---|
-| `tool_result` | 13,460 |
-| `response` | 12,194 |
-| `thinking` | 8,465 |
-| `prompt` | 1,262 |
-| `system` | 7 |
-
-Every record carries its session, its entry id, and its scope. 84 sessions
-name a parent, and every parent is in the store, so the chain from a
-subagent back to the person resolves.
+A record that arrives twice is stored once, because the entry id is the
+same from every producer. Re-running the backfill over sessions the live
+hook already captured adds nothing.
 
 ## What this is not
 

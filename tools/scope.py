@@ -14,13 +14,13 @@ Nothing is configured. Every answer comes from the filesystem, so a forge
 with no organization level and an organization that is not a repository both
 work without being described.
 
-    ~/src/github.com/liken-sh            -> github.com/liken-sh       org
-    ~/src/github.com/liken-sh/liken      -> github.com/liken-sh/liken repo
-    ~/src/code.example.com/widget     -> code.example.com/widget repo
-    ~/.ai                                -> .ai                      directory
+    ~/src/github.com/acme/widget         -> github.com/acme/widget    repo
+    ~/src/github.com/acme                -> github.com/acme           org
+    ~/src/code.example.com/widget        -> code.example.com/widget   repo
+    ~/.config                            -> .config                  directory
 
 The key is a path, so retrieval inherits for free: a memory scoped to
-`github.com/liken-sh` surfaces in any repository beneath it, and a memory
+`github.com/acme` surfaces in any repository beneath it, and a memory
 scoped to one repository does not leak into a sibling.
 """
 

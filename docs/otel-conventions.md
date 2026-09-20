@@ -133,7 +133,7 @@ can use standard names.
 
 | Attribute | Meaning |
 |---|---|
-| `agentic_memory.scope` | the scope key, such as `github.com/liken-sh/liken` |
+| `agentic_memory.scope` | the scope key, such as `github.com/acme/widget` |
 | `agentic_memory.scope.kind` | `repo`, `org`, `forge`, or `directory` |
 
 The scope has no OpenTelemetry attribute. It is derived on the client from
