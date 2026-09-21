@@ -42,6 +42,29 @@ class Settings(BaseSettings):
     # characters a token, so this leaves room for the questions under the limit.
     classify_budget: int = 60_000
 
+    # The model that embeds a statement and a prompt, so the two can be
+    # compared. It is small on purpose: four local models were measured and all
+    # chose the same best statement, so the smallest is enough at 275 MB
+    # resident and 12 ms a prompt. The cache is where its files are kept, and
+    # the compose file mounts one volume there for the service and the worker.
+    embed_model: str = "BAAI/bge-small-en-v1.5"
+    embed_threads: int = 4
+    embed_cache: str = ".fastembed"
+
+    # What a turn is handed. A session's first prompt gets the top of its
+    # scope's list, and every prompt after it gets only the statements that are
+    # about what was typed, or nothing.
+    recall_session_limit: int = 10
+    recall_prompt_limit: int = 5
+
+    # How far above the ninety-ninth percentile of the scope's similarities a
+    # statement has to score to be handed over. Measured against one scope of
+    # 379 statements, the best match was 0.087 and 0.099 above the baseline on
+    # two real hits and 0.061 to 0.072 on three prompts about nothing in the
+    # record, so 0.08 is between them and the room is thin. It is a guess until
+    # the handouts in `injections` are labelled.
+    recall_margin: float = 0.08
+
 
 @lru_cache
 def get_settings() -> Settings:

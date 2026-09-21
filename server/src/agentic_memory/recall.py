@@ -1,9 +1,10 @@
 """The turn path: what a session is handed, and the record of it.
 
-A turn starts, the client asks, and this answers with the live statements
-reachable from where the session is, best first, less whatever the session
-was already handed. It is one read and one write, and it calls no model,
-because a person is waiting.
+A turn starts, the client asks, and this answers in one of two forms. A
+session's first ask is handed the top of its scope's list, best first. Every
+ask after it is handed only the statements that are about the prompt, found
+by `match`, or nothing. Both leave out what the session was already handed.
+Each form is one read and one write, because a person is waiting.
 
 The handout is recorded by session so that two things can follow from it. A
 statement the session already saw is not sent again, because the injected
@@ -16,7 +17,10 @@ from datetime import UTC, datetime
 
 import asyncpg
 
+from .embed import Embedder
+from .match import match
 from .memories import ranked
+from .settings import Settings
 
 # The most statements one turn is handed. A turn's budget is the model's
 # context, and past a few dozen sentences the injection is the conversation.
@@ -58,6 +62,25 @@ HANDED = """
 """
 
 
+SEEN_ANYTHING = "SELECT EXISTS (SELECT 1 FROM injections WHERE session_id = $1)"
+
+
+async def record(
+    pool: asyncpg.Pool,
+    chosen: list[dict],
+    *,
+    session_id: str,
+    harness: str,
+    scope_key: str | None,
+    moment: datetime,
+) -> None:
+    """Write down what went, when anything did."""
+    if chosen:
+        await pool.execute(
+            RECORD, session_id, harness, scope_key, [row["id"] for row in chosen], moment
+        )
+
+
 async def recall(
     pool: asyncpg.Pool,
     *,
@@ -67,14 +90,53 @@ async def recall(
     limit: int = LIMIT,
     now: datetime | None = None,
 ) -> list[dict]:
-    """The statements a turn is handed, best first, and the record that it was."""
+    """The top of the scope's list, less what the session saw, and the record of it."""
     moment = now or datetime.now(UTC)
     found = await pool.fetch(UNSEEN, scope_key, session_id)
     chosen = ranked((dict(row) for row in found), moment)[: min(limit, LIMIT)]
-    if chosen:
-        await pool.execute(
-            RECORD, session_id, harness, scope_key, [row["id"] for row in chosen], moment
+    await record(
+        pool, chosen, session_id=session_id, harness=harness, scope_key=scope_key, moment=moment
+    )
+    return chosen
+
+
+async def turn(
+    pool: asyncpg.Pool,
+    embedder: Embedder,
+    settings: Settings,
+    *,
+    session_id: str,
+    harness: str,
+    scope_key: str | None,
+    prompt: str,
+    now: datetime | None = None,
+) -> list[dict]:
+    """What this turn is handed: the opening list on a session's first ask, a match after."""
+    moment = now or datetime.now(UTC)
+    if not await pool.fetchval(SEEN_ANYTHING, session_id):
+        return await recall(
+            pool,
+            session_id=session_id,
+            harness=harness,
+            scope_key=scope_key,
+            limit=settings.recall_session_limit,
+            now=moment,
         )
+    if not prompt.strip():
+        return []
+    chosen = await match(
+        pool,
+        embedder,
+        session_id=session_id,
+        scope_key=scope_key,
+        prompt=prompt,
+        limit=settings.recall_prompt_limit,
+        margin=settings.recall_margin,
+        now=moment,
+    )
+    await record(
+        pool, chosen, session_id=session_id, harness=harness, scope_key=scope_key, moment=moment
+    )
     return chosen
 
 

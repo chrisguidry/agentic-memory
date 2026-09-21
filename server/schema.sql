@@ -17,6 +17,10 @@
 -- the body, with the hot fields lifted out of the attribute map so a query
 -- does not have to walk one.
 
+-- The statements carry an embedding, and the nearest ones to a prompt are
+-- found with pgvector's operator and index.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS resources (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
@@ -318,6 +322,13 @@ ALTER TABLE classifications ADD COLUMN IF NOT EXISTS actor_depth integer;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS actor text;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS actor_depth integer;
 
+-- The embedding of the statement, for matching a prompt against it, and the
+-- model that produced it, because a vector from one model means nothing to
+-- another. The width is bge-small's. A model with another width is a change
+-- to this column, and every row is embedded again either way.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding vector(384);
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding_model text;
+
 -- One statement per message per kind per question set, so a retry writes
 -- nothing and one message can carry a fact and a rule at once.
 CREATE UNIQUE INDEX IF NOT EXISTS memories_source
@@ -328,6 +339,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS memories_source
 -- and the kind follows because the ranking weighs kinds differently.
 CREATE INDEX IF NOT EXISTS memories_live
     ON memories (scope_key, kind, said_at DESC)
+    WHERE superseded_by IS NULL;
+
+-- The nearest live statements to a prompt. Cosine, because the model's
+-- vectors are compared that way, and only the live rows, because a retired
+-- statement is never handed out.
+CREATE INDEX IF NOT EXISTS memories_embedding
+    ON memories USING hnsw (embedding vector_cosine_ops)
     WHERE superseded_by IS NULL;
 
 -- The ranking is computed from the kind and the age rather than read from a

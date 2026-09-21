@@ -80,10 +80,18 @@ Register it under each of the four events in `~/.claude/settings.json`:
 ## Recall into Claude Code
 
 `tools/recall.py` is the other half of the hook. On `UserPromptSubmit` it
-derives the scope from the working directory, asks the service for the
-statements worth reading there, and hands them to the turn as context in
-the shape the hook docs specify. The service leaves out what it already
-handed this session.
+derives the scope from the working directory, sends the prompt and the
+scope to the service, and hands what comes back to the turn as context in
+the shape the hook docs specify. The pi extension does the same on
+`before_agent_start`.
+
+What comes back has two forms, and the service picks between them. A
+session's first turn is handed the standing statements for the place, ten
+by default, ranked by kind and age. Every turn after that is handed only
+the statements that match the prompt, up to five, or nothing when none
+matches well enough. In both forms the service leaves out what it already
+handed this session. [`plans/04-the-match.md`](plans/04-the-match.md)
+holds the match.
 
 The deadline is 150 milliseconds in all, counted from the interpreter's
 first line, and past it the turn proceeds with nothing. A missing service
@@ -100,7 +108,7 @@ Register it under `UserPromptSubmit` in `~/.claude/settings.json`. The
 {"type": "command", "command": "python3 -S /path/to/agentic-memory/tools/recall.py", "timeout": 5}
 ```
 
-`AGENTIC_MEMORY_RECALL_LIMIT` sets how many statements a turn is handed,
+`AGENTIC_MEMORY_RECALL_LIMIT` caps how many statements a turn is handed,
 ten by default, and `AGENTIC_MEMORY_ENDPOINT` names the service.
 
 ## What a backfill produces

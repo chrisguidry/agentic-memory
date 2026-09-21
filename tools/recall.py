@@ -2,9 +2,11 @@
 """Hand a Claude Code turn what this person's earlier sessions said.
 
 Claude Code runs this on `UserPromptSubmit` with a JSON payload on stdin. The
-hook derives the scope from the working directory, asks the service for the
-statements worth reading there, and writes them to stdout as the context the
-hook docs specify, so the model sees them on this turn.
+hook derives the scope from the working directory, sends the prompt and the
+scope to the service, and writes what comes back to stdout as the context the
+hook docs specify, so the model reads it on this turn. The service picks what
+comes back: the standing statements for the place on a session's first turn,
+and after that only the statements that match the prompt, or nothing.
 
 Two rules shape everything here.
 
@@ -47,7 +49,10 @@ DEADLINE = 0.150
 DEFAULT_ENDPOINT = "http://127.0.0.1:4318/recall"
 LOG = "recall.log"
 DEFAULT_LIMIT = 10
-HEADING = "Statements this person's earlier sessions produced, with where each came from:"
+HEADING = (
+    "Statements from this person's earlier sessions, chosen for this place and this prompt, "
+    "with where each came from:"
+)
 
 DEFAULT_STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
 STATE_DIR = DEFAULT_STATE / "agentic-memory" / "claude-code"
@@ -125,10 +130,13 @@ def _recall(
         return None
 
     scope_key, _ = scope_of(Path(cwd), home)
+    # The prompt goes whole. The service matches statements against it and
+    # applies its own limit to its length.
     asked = {
         "session_id": session_id,
         "harness": "claude-code",
         "scope_key": scope_key,
+        "prompt": payload.get("prompt") or "",
         "limit": limit,
     }
 

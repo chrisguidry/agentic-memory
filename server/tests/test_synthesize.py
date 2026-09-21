@@ -377,11 +377,22 @@ class TestReplacing:
         assert store.retired == []
 
 
+class FakeEmbedder:
+    """A model that embeds nothing, for a store that hands it no rows."""
+
+    model = "fake"
+
+    def documents(self, texts):
+        return [[0.0] for _ in texts]
+
+
 class TestSynthesize:
     async def test_the_task_writes_what_the_writer_writes(self):
         store = FakeStore(reading(semantic=0.95))
         model = replying(("semantic", "The repo uses uv."))
-        await synthesize("s1", "e1", settings=Settings(), pool=store, client=model)
+        await synthesize(
+            "s1", "e1", settings=Settings(), pool=store, client=model, embedder=FakeEmbedder()
+        )
         assert len(store.written) == 1
 
 

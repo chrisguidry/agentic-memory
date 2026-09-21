@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     "asyncpg>=0.30",
     "fastapi>=0.115",
+    "fastembed>=0.8",
     "httpx>=0.27",
     "pydantic-settings>=2.0",
     "pydocket>=0.25",
@@ -46,6 +47,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # default built once at import time, and these are resolved per task.
 "src/agentic_memory/classify.py" = ["B008"]
 "src/agentic_memory/synthesize.py" = ["B008"]
+"src/agentic_memory/embed.py" = ["B008"]
 
 [tool.pytest.ini_options]
 # The tasks are async, and a test of one should not need a decorator to say so.

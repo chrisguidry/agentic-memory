@@ -16,7 +16,9 @@ import docker
 from docker import DockerClient
 from docker.models.containers import Container
 
-IMAGE = "postgres:17"
+# pgvector's build, the same one the compose stack runs, because the schema
+# creates the extension.
+IMAGE = "pgvector/pgvector:0.8.6-pg17-trixie"
 USER = "agentic_memory"
 PASSWORD = "agentic_memory"
 SOURCE_LABEL = "agentic-memory-tests"

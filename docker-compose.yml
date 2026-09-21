@@ -12,7 +12,11 @@
 
 services:
   postgres:
-    image: postgres:17
+    # pgvector's build of the same Postgres, because the statements carry an
+    # embedding and the nearest ones are found with its index. The trixie tag
+    # matches the C library postgres:17 created the data directory under, so the
+    # collation the text indexes were built with is the one the server has.
+    image: pgvector/pgvector:0.8.6-pg17-trixie
     environment:
       POSTGRES_DB: agentic_memory
       POSTGRES_USER: agentic_memory
@@ -48,6 +52,7 @@ services:
       AGENTIC_MEMORY_HOST: 0.0.0.0
       AGENTIC_MEMORY_PORT: "4318"
       AGENTIC_MEMORY_REDIS_URL: redis://redis:6379/0
+      AGENTIC_MEMORY_EMBED_CACHE: /app/models
     ports:
       - "4318:4318"
     volumes:
@@ -56,6 +61,8 @@ services:
       # The service applies this when it starts, so the file and the database
       # cannot disagree about what the tables are.
       - ./server/schema.sql:/app/schema.sql:ro
+      # The embedding model, downloaded once and shared with the worker.
+      - model-cache:/app/models
     command:
       - uvicorn
       - agentic_memory.app:app
@@ -89,12 +96,14 @@ services:
     environment:
       AGENTIC_MEMORY_DATABASE_URL: postgresql://agentic_memory:agentic_memory@postgres:5432/agentic_memory
       AGENTIC_MEMORY_REDIS_URL: redis://redis:6379/0
+      AGENTIC_MEMORY_EMBED_CACHE: /app/models
       # The keys keep their own names because that is what the clients look for.
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:?run direnv allow, or export TYPESAFE_API_KEY}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:?run direnv allow, or export DEEPINFRA_API_KEY}
     volumes:
       # Read-only, so the container never writes into the working tree.
       - ./server/src:/app/src:ro
+      - model-cache:/app/models
     command: ["python", "-m", "agentic_memory.worker"]
     depends_on:
       postgres:
@@ -105,6 +114,7 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  model-cache:
 
 networks:
   default:

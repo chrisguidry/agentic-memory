@@ -20,6 +20,7 @@ from docket import Depends, ExponentialRetry, Shared
 
 from .classify import KIND_COLUMNS, MODEL_RETRY, questions_fingerprint
 from .db import store_pool
+from .embed import Embedder, embed_message, shared_embedder
 from .memories import retire, standing
 from .settings import Settings, get_settings
 
@@ -409,9 +410,13 @@ async def synthesize(
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Shared(store_pool),
     client: httpx.AsyncClient = Shared(completions_client),
+    embedder: Embedder = Shared(shared_embedder),
     retry: ExponentialRetry = MODEL_RETRY,
 ) -> None:
     """Turn one classified message into statements, if it is worth any."""
     written = await write(session_id, entry_id, settings=settings, pool=pool, client=client)
     if written:
         log.info("wrote %s for %s %s: %s", len(written), session_id, entry_id, written)
+        # Embedded here rather than by a later pass, so a statement can be
+        # matched against a prompt as soon as it exists.
+        await embed_message(pool, embedder, session_id, entry_id)

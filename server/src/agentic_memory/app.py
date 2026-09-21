@@ -5,6 +5,7 @@ into the queryable one, and hands every prompt that arrived to the classifier.
 It derives nothing itself, and it calls no model.
 """
 
+import asyncio
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
@@ -15,7 +16,7 @@ from docket import Docket
 from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel, Field
 
-from . import db, ingest, recall
+from . import db, embed, ingest, recall
 from . import memories as statements
 from . import synthesize as writer
 from .classify import (
@@ -46,6 +47,9 @@ async def lifespan(app: FastAPI):
         app.state.docket = await stack.enter_async_context(
             Docket(name=settings.docket_name, url=settings.redis_url)
         )
+        # The model that embeds a prompt, loaded once. It takes a second to load
+        # and twelve milliseconds a prompt, and the turn path waits on the second.
+        app.state.embedder = await asyncio.to_thread(embed.load, settings)
         log.info("connected to the store")
         yield
 
@@ -203,23 +207,29 @@ class Ask(BaseModel):
     session_id: str
     harness: str
     scope_key: str | None = None
+    # What the person typed, so a turn after the first can be handed what is
+    # about it. Empty means the session's first ask is the only form served.
+    prompt: str = ""
     limit: int = Field(recall.LIMIT, ge=1, le=recall.LIMIT)
 
 
 @app.post("/recall")
 async def recall_for_turn(request: Request, ask: Ask) -> dict:
-    """What a turn is handed: one lookup and one score, and no model.
+    """What a turn is handed.
 
-    The statements are the live ones reachable from the scope, best first, less
-    whatever this session was already handed. The handout is recorded, so the
-    next turn's list is shorter and the outcome flow has something to join to.
+    A session's first ask gets the top of its scope's list. Every ask after it
+    gets the statements that are about the prompt, or nothing. Both leave out
+    what this session was already handed, and both are recorded, so the outcome
+    flow has something to join to.
     """
-    found = await recall.recall(
+    found = await recall.turn(
         request.app.state.pool,
+        request.app.state.embedder,
+        get_settings(),
         session_id=ask.session_id,
         harness=ask.harness,
         scope_key=ask.scope_key,
-        limit=ask.limit,
+        prompt=ask.prompt,
     )
     return {
         "statements": [
@@ -243,6 +253,13 @@ async def injections(
 ) -> list[dict]:
     """What a session was handed, latest turn first, for watching the experiment."""
     return await recall.handed(request.app.state.pool, session_id=session_id, limit=limit)
+
+
+@app.post("/embed")
+async def embed_all(request: Request) -> dict:
+    """Embed every live statement the model has not, which applies a model change."""
+    await request.app.state.docket.add(embed.embed_statements, key="embed-statements")()
+    return {"scheduled": True}
 
 
 @app.post("/rebuild")

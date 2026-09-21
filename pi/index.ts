@@ -316,7 +316,7 @@ export default function (pi: ExtensionAPI) {
   // the deadline. The block is a message of its own after the prompt, so the
   // cached prefix of the conversation survives and only the block is new. It is
   // displayed, because the design says an injection is visible.
-  pi.on("before_agent_start", async (_event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     if (!RECALL_ENABLED || !(RECALL_LIMIT > 0)) return;
     try {
       const statements = await recall(
@@ -325,6 +325,7 @@ export default function (pi: ExtensionAPI) {
           session_id: ctx.sessionManager.getSessionId(),
           harness: "pi",
           scope_key: scope?.key,
+          prompt: event.prompt,
           limit: RECALL_LIMIT,
         },
         RECALL_DEADLINE_MS,

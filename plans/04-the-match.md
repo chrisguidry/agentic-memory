@@ -84,6 +84,12 @@ percentile of the scope's similarities by a set amount. The amount is a
 setting. A fixed score would move with the model and the corpus, and a
 margin does not.
 
+In a scope of a few thousand statements the percentile has about thirty
+above it. In a scope of a hundred it would have one, and the few wordings
+of one rule would then hide each other, so the baseline never rises above
+the tenth best. A scope of ten statements or fewer has no baseline, and
+its prompts are handed nothing.
+
 The rank a statement is handed at is its similarity times the weight the
 kind and the age already give it, so a fresh correction ranks above an old
 plan that matches the same words.

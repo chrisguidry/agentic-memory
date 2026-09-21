@@ -118,7 +118,8 @@ class TestTheBlock:
         assert block is not None
         lines = block.splitlines()
         assert lines[0] == (
-            "Statements this person's earlier sessions produced, with where each came from:"
+            "Statements from this person's earlier sessions, chosen for this place and this "
+            "prompt, with where each came from:"
         )
         assert lines[1] == (
             "- preference, example.test/acme/widget, person, 3 days ago: "
@@ -128,7 +129,9 @@ class TestTheBlock:
             "- correction, everywhere, agent at depth 1, 40 days ago: Commit messages say why."
         )
 
-    def test_the_service_is_asked_for_this_session_and_scope(self, repo, state_dir):
+    def test_the_service_is_asked_for_this_session_scope_and_prompt(self, repo, state_dir):
+        # The prompt goes with the ask because the service matches statements
+        # against it, and the service applies its own limit to its length.
         service = Service([statement("x")])
         try:
             ask(service.endpoint, repo, state_dir)
@@ -139,9 +142,26 @@ class TestTheBlock:
                 "session_id": SESSION,
                 "harness": "claude-code",
                 "scope_key": "example.test/acme/widget",
+                "prompt": "hi",
                 "limit": 10,
             }
         ]
+
+    def test_a_missing_prompt_is_sent_as_empty(self, repo, state_dir):
+        service = Service([statement("x")])
+        payload = {"session_id": SESSION, "hook_event_name": "UserPromptSubmit", "cwd": str(repo)}
+        try:
+            recall.recall(
+                payload,
+                endpoint=service.endpoint,
+                limit=10,
+                state_dir=state_dir,
+                home=repo.parents[4],
+                now=NOW,
+            )
+        finally:
+            service.stop()
+        assert service.asked[0]["prompt"] == ""
 
     def test_an_empty_answer_is_no_block(self, repo, state_dir):
         service = Service([])
