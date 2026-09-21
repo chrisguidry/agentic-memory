@@ -22,7 +22,7 @@ from agentic_memory.synthesize import (
 )
 
 # When the message was said. The ranking ages a statement by this rather than
-# by when the statement was written, so the writer carries it onto the row.
+# by when the statement was written, so the writer records it on the row.
 SAID = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
 
 
@@ -87,11 +87,16 @@ class FakeModel:
         )
 
 
-def replying(*statements, replaces=None) -> FakeModel:
+def replying(*statements, replaces=None, everywhere=None) -> FakeModel:
     return FakeModel(
         json.dumps(
             [
-                {"kind": kind, "statement": statement, "replaces": replaces}
+                {
+                    "kind": kind,
+                    "statement": statement,
+                    "replaces": replaces,
+                    **({"everywhere": everywhere} if everywhere is not None else {}),
+                }
                 for kind, statement in statements
             ]
         )
@@ -184,19 +189,56 @@ class TestWrite:
         (written,) = store.written
         assert written[8] == SAID
 
-    async def test_a_statement_that_holds_everywhere_is_scoped_to_nothing(self):
-        store = FakeStore(reading(semantic=0.95, beyond_this_project=0.9))
-        model = replying(("semantic", "Never use em dashes."))
+    async def test_a_statement_the_writer_marks_everywhere_is_scoped_to_nothing(self):
+        store = FakeStore(reading(semantic=0.95))
+        model = replying(("semantic", "Never use em dashes."), everywhere=True)
         await write("s1", "e1", settings=Settings(), pool=store, client=model)
         (written,) = store.written
         assert written[3] is None
 
-    async def test_a_statement_about_this_project_keeps_the_scope(self):
-        store = FakeStore(reading(semantic=0.95, beyond_this_project=0.1))
+    async def test_a_statement_the_writer_says_nothing_about_keeps_the_scope(self):
+        # Keeping the project is the narrower of the two ways to be wrong, so a
+        # sentence with no answer stays here.
+        store = FakeStore(reading(semantic=0.95))
         model = replying(("semantic", "The schema is at server/schema.sql."))
         await write("s1", "e1", settings=Settings(), pool=store, client=model)
         (written,) = store.written
         assert written[3] == "github.com/liken-sh"
+
+    async def test_a_message_that_reads_as_general_does_not_remove_the_scope_by_itself(self):
+        # The classifier judges the message, and one message can hold a general
+        # rule and a fact about this project at once, so the sentence decides.
+        store = FakeStore(reading(semantic=0.95, beyond_this_project=0.95))
+        model = replying(("semantic", "In liken-sh, spec.zones must declare zone2."))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        (written,) = store.written
+        assert written[3] == "github.com/liken-sh"
+
+    async def test_a_general_rule_the_writer_marks_is_left_out_of_the_project(self):
+        store = FakeStore(reading(semantic=0.95, beyond_this_project=0.95))
+        model = replying(("semantic", "Design comes before implementation."), everywhere=True)
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        (written,) = store.written
+        assert written[3] is None
+
+    async def test_two_sentences_from_one_message_decide_their_own_scope(self):
+        store = FakeStore(reading(semantic=0.95, procedural=0.95))
+        model = FakeModel(
+            json.dumps(
+                [
+                    {"kind": "semantic", "statement": "general", "everywhere": True},
+                    {"kind": "procedural", "statement": "here", "everywhere": False},
+                ]
+            )
+        )
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert [written[3] for written in store.written] == [None, "github.com/liken-sh"]
+
+    async def test_a_message_that_reads_as_general_is_told_the_sentence_decides(self):
+        store = FakeStore(reading(semantic=0.95, beyond_this_project=0.95))
+        model = replying(("semantic", "x"))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert "Decide each sentence for itself" in model.asked
 
     async def test_the_message_and_what_came_before_are_both_put_in_the_ask(self):
         store = FakeStore(reading(semantic=0.95))

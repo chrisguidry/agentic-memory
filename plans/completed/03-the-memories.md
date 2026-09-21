@@ -59,6 +59,15 @@ valid interval. The service learns that something stopped being true at
 a different moment from when it stopped, and the design keeps those two
 apart on purpose.
 
+A statement's scope is decided by the writer, from the sentence it wrote.
+The classifier asks whether the message applies beyond this project, and
+one message can hold a general rule and a fact about this project at
+once, so answering that question for every sentence it produced filed
+sentences about this project under every project. Measured on one
+machine's history, 15 of the 62 statements reachable from every project
+named the project they came from. The writer marks each sentence now, and
+the same measurement finds none of 24.
+
 ## The slice a statement is compared against
 
 Retirement needs to find the statements a new one could replace. The
@@ -195,6 +204,10 @@ the service believed and when, and that is a different question.
   every candidate list.
 - A statement that holds everywhere is reachable from every scope and
   is a candidate for a message in any of them.
+- A statement is filed under the project it names, so a sentence about
+  this project is not reachable from a different one.
+- A sentence the writer says nothing about stays with the project, which
+  is the narrower of the two ways to be wrong.
 - The ranking puts a fresh statement of a kind with a floor above the
   same kind aged a year, and puts the same kind aged a year above a
   prospective statement written today.

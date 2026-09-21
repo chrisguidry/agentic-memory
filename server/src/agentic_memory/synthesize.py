@@ -64,7 +64,7 @@ READING = f"""
 """
 
 # One statement per message per kind per question set, so a retry writes
-# nothing and one message can carry a fact and a rule at once. The new id comes
+# nothing and one message can hold a fact and a rule at once. The new id comes
 # back because a statement that replaces another one names it.
 RECORD = """
     INSERT INTO memories
@@ -126,8 +126,13 @@ Rules:
   and a query taking more than a second is the trigger to move" tells a reader
   when the statement applies. "Continue with the plan" tells them nothing.
 
-- Say which project it is about when it is not about the one the reader is in.
-  "In equipment-operator, spec.zones must declare zone2 and zone3".
+- A sentence is about this project or about every project, and it has to say
+  which. One that holds only here names the project, because it will be read in
+  other projects too: "In equipment-operator, spec.zones must declare zone2 and
+  zone3". One that holds everywhere names no project and has to make sense in a
+  repository it was not written in. Mark each sentence with "everywhere"
+  accordingly, and decide each sentence for itself, because a message can hold
+  a general rule and a fact about this project at once.
 
 - Keep the specifics. A filename, a command, and a version are the parts worth
   remembering. "Prefers modern tooling" is worth nothing.
@@ -152,12 +157,14 @@ The message itself, which is what you are writing about:
 The kinds of memory found in that message: {kinds}
 {extra}{standing}
 Answer with a JSON array and nothing else. Each element has "kind" set to one
-of the kinds above, "statement" set to one sentence, and "replaces" set to the
-numbers of any statements the new one replaces.
+of the kinds above, "statement" set to one sentence, "everywhere" set to true
+when the sentence holds in other projects as well as this one, and "replaces"
+set to the numbers of any statements the new one replaces.
 An empty array means nothing here is worth remembering."""
 
 EXTRA = """
-Two more things were found, and they change how the sentences are written:
+Two more things were found, and they steer the sentences rather than decide
+anything about them:
 {notes}
 """
 
@@ -310,7 +317,11 @@ async def write(
 
     notes = []
     if found["beyond_this_project"] >= 0.7:
-        notes.append("It applies beyond this project, so write it as a general rule.")
+        notes.append(
+            "The message reads as applying beyond this project, so a sentence that "
+            "holds elsewhere should be a general rule. Decide each sentence for "
+            "itself."
+        )
     if found["forbids"] >= 0.7:
         notes.append("It rules something out, so write it as a thing not to do.")
 
@@ -339,16 +350,19 @@ async def write(
     if not sentences:
         return []
 
-    # A statement that holds everywhere has no scope of its own, and a null
-    # scope is reachable from every scope.
-    scope = None if found["beyond_this_project"] >= 0.7 else found["scope_key"]
-
     written = []
     for sentence in sentences:
         kind = sentence.get("kind")
         statement = (sentence.get("statement") or "").strip()
         if not writing_from(kind) or kind not in firing or not statement:
             continue
+        # A statement that holds everywhere has no scope of its own, and a null
+        # scope is reachable from every scope. The writer decides this from the
+        # sentence it wrote, because the classifier judged the message and one
+        # message can hold a general rule and a fact about this project at
+        # once. A sentence the writer says nothing about stays with the project,
+        # which is the narrower of the two.
+        scope = None if sentence.get("everywhere") is True else found["scope_key"]
         new_id = await pool.fetchval(
             RECORD,
             statement,
