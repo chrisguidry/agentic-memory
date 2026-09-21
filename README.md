@@ -90,7 +90,7 @@ session's first turn is handed the standing statements for the place, ten
 by default, ranked by kind and age. Every turn after that is handed only
 the statements that match the prompt, up to five, or nothing when none
 matches well enough. In both forms the service leaves out what it already
-handed this session. [`plans/04-the-match.md`](plans/04-the-match.md)
+handed this session. [`plans/completed/04-the-match.md`](plans/completed/04-the-match.md)
 holds the match.
 
 The deadline is 150 milliseconds in all, counted from the interpreter's
