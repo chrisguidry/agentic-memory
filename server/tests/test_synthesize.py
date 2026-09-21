@@ -30,7 +30,8 @@ def reading(**overrides) -> dict:
         "scope_key": "github.com/liken-sh",
         "model": "jev-1.13.0",
         "questions_fingerprint": questions_fingerprint(),
-        "state": {"before": "[person] earlier", "message": "we use uv, not pip"},
+        "before": "[person] earlier",
+        "message": "we use uv, not pip",
         "beyond_this_project": 0.1,
         "forbids": 0.1,
     }

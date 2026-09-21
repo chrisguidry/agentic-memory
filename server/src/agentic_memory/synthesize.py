@@ -44,7 +44,8 @@ THRESHOLDS: dict[str, float] = {
 # The reading for one message, with the state it judged and every score.
 READING = f"""
     SELECT session_id, entry_id, scope_key, model, questions_fingerprint,
-           state, {", ".join(KIND_COLUMNS)}, beyond_this_project, forbids
+           state ->> 'before' AS before, state ->> 'message' AS message,
+           {", ".join(sorted(set(KIND_COLUMNS)))}
     FROM classifications
     WHERE session_id = $1 AND entry_id = $2 AND questions_fingerprint = $3
 """
@@ -208,11 +209,10 @@ async def write(
     if found["forbids"] >= 0.7:
         notes.append("It rules something out, so write it as a thing not to do.")
 
-    state = found["state"]
     instructions = INSTRUCTIONS.format(
         scope=found["scope_key"] or "unknown",
-        before=state.get("before") or "(nothing came before it)",
-        message=state.get("message", ""),
+        before=found["before"] or "(nothing came before it)",
+        message=found["message"] or "",
         kinds=", ".join(sorted(firing)),
         extra=EXTRA.format(notes="\n".join(f"- {note}" for note in notes)) if notes else "",
     )

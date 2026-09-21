@@ -23,20 +23,17 @@ log = logging.getLogger("agentic_memory")
 
 
 async def open_pool(database_url: str, *, size: int = 4) -> asyncpg.Pool:
-    """A pool that hands jsonb columns back as Python objects.
+    """The pool every part of this service uses.
 
-    asyncpg returns jsonb as text unless a codec says otherwise. Every reading
-    and every statement in this service is stored in a jsonb column, so the
-    codec belongs on the connection rather than at each call site.
+    A jsonb codec was tried here and removed. It decoded a jsonb value returned
+    from a function and left a jsonb column as text, on the same connection, so
+    a query that read a column got a string and one that built an object got a
+    dict. Worse, its encoder ran a second json.dumps on text that was already
+    encoded, so an object was stored as a JSON string and no key could be read
+    out of it. A reader asks Postgres for the field it wants, which behaves the
+    same way everywhere.
     """
-
-    async def prepare(connection: asyncpg.Connection) -> None:
-        for kind in ("json", "jsonb"):
-            await connection.set_type_codec(
-                kind, encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
-            )
-
-    return await asyncpg.create_pool(database_url, min_size=1, max_size=size, init=prepare)
+    return await asyncpg.create_pool(database_url, min_size=1, max_size=size)
 
 
 @asynccontextmanager
