@@ -48,10 +48,11 @@ measured.
 turn the record into memory. A worker reads a window of a session, asks a
 cheap model which kinds of memory are in it, and writes down the
 probabilities. No memory is written.
-* [04, The match](04-the-match.md). The turn path splits in two: a
-  session's first prompt is handed the top of its scope's list, and every
-  prompt after it is handed only the few statements that are about what
-  was typed, found with a small local embedding model, or nothing.
+* [05, The merge](05-the-merge.md). The same rule is in the table many
+  times in different words, and the match cannot pass a rule that is its
+  own baseline. A new statement supersedes its near-duplicates of the same
+  kind and scope, on the number alone at the top and on a yes from the
+  System One model in the band below it.
 
 Nothing after this is written. The design says where the work can go, and
 a plan is written when the work is about to start. A plan written now for
@@ -60,6 +61,7 @@ a step six months out would be a guess with a number on it.
 ## Completed
 
 * [03, The memories](completed/03-the-memories.md). Closed 2026-09-21.
+* [04, The match](completed/04-the-match.md). Closed 2026-09-21.
 
 01 and 02 describe the record and the classifier, and both are built.
 They were built before this section was kept, so neither was moved here

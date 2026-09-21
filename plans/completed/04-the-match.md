@@ -1,5 +1,7 @@
 # 04, The match
 
+Closed 2026-09-21. Built in the commit that built it, and closed after.
+
 ## The problem
 
 A turn is handed the scope's list, ten at a time, and nothing reads the
@@ -136,6 +138,22 @@ room.
 - The model's name, its threads, the margin, and both limits are settings.
 - The ask answers inside the deadline against the compose stack, measured.
 - The suite runs against pgvector, and the whole schema is re-applicable.
+
+## What the drill measured
+
+Against the compose stack with 3,153 live statements embedded, a session's
+first ask was handed ten statements in 44 ms. A later ask with a real prompt
+answered in 31 ms at the median and 34 ms at the ninetieth percentile over
+twenty calls. "Speak plainer" was handed one statement, the writing rule, and
+"local embedding model" was handed one, the statement from that conversation.
+"What rhymes with orange" and "purple monkey dishwasher" were handed nothing.
+
+The margin is 0.08. Two real hits were 0.087 and 0.099 above the baseline
+and three prompts about nothing in the record were 0.061 to 0.072 above it,
+so the room is thin. "How do I write a commit message here" was handed
+nothing at any margin, because the top twenty matches were twenty wordings
+of one rule and the baseline was itself a duplicate. That is what plan 05
+is for.
 
 ## Open questions
 

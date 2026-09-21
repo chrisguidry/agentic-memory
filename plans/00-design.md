@@ -218,8 +218,8 @@ about the prompt: the service embeds the prompt with a small local model,
 reads the nearest statements the session has not seen, and hands over the
 few that score well above the rest, or nothing. The embedding takes
 milliseconds and runs in the process, so the deadline below holds. The injected text goes into the newest user message, so the cached
-prefix of the conversation survives. `plans/04-the-match.md` holds the
-match.
+prefix of the conversation survives. `plans/completed/04-the-match.md` holds
+the match.
 
 ### Maintenance
 
