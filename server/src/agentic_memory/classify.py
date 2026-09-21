@@ -39,10 +39,16 @@ ABOUT_THE_MESSAGE = {
     ),
 }
 
-# One question per kind of memory the record can hold. Each one asks about a
-# single proposition, because the answer is the probability of that proposition
-# and nothing else. A question about degree would come back as the probability
-# of "yes" and would not measure the degree.
+# One question per kind of memory the record can hold, and one per thing the
+# kinds can be about. Each one asks about a single proposition, because the
+# answer is the probability of that proposition and nothing else. A question
+# about degree would come back as the probability of "yes" and would not measure
+# the degree.
+#
+# A judgment that hides several questions inside it comes back as one number
+# that cannot say which part was true, so the dimensions are asked apart and
+# combined in code. Nothing here is asked that code can compute exactly, such as
+# which speaker said it: the record already knows.
 #
 # The questions name the speakers rather than the person, because both sides
 # state facts, intentions, and preferences and the record holds both. Which
@@ -78,27 +84,29 @@ KINDS: dict[str, Noul] = {
     "prospective": Noul(
         instructions={
             "question": (
-                "Does `message` state something one of the speakers means to do later, "
-                "or leave something unfinished that they will come back to?"
+                "Does `message` commit to work that will still need doing after this "
+                "conversation ends?"
             ),
             **ABOUT_THE_MESSAGE,
         },
         criteria={
-            "true": "It names an intention, a follow-up, or work left open.",
-            "false": "It names nothing left to do.",
+            "true": "It names a follow-up, a commitment, or work left open that outlives this "
+            "session.",
+            "false": "It asks for something this conversation will finish, or names nothing "
+            "left to do.",
         },
     ),
     "preference": Noul(
         instructions={
             "question": (
-                "Does `message` state how one of the speakers wants things done, or "
-                "name something they dislike?"
+                "Does `message` state a rule or a taste that should hold in later "
+                "conversations too?"
             ),
             **ABOUT_THE_MESSAGE,
         },
         criteria={
-            "true": "It states a taste, a standing preference, or a dislike.",
-            "false": "It states no preference.",
+            "true": "It states a standing rule, a lasting taste, or a general dislike.",
+            "false": "It picks an option for this task only, or states no preference.",
         },
     ),
     "correction": Noul(
@@ -125,6 +133,49 @@ KINDS: dict[str, Noul] = {
         criteria={
             "true": "It says the work or the approach was right, or is what was wanted.",
             "false": "It only confirms a task finished, or says nothing about the work.",
+        },
+    ),
+    # The kinds above say what is there. These say what it is about, and they are
+    # asked alongside rather than only when their kind is present, because a
+    # question costs tokens and almost no time and code decides what is relevant.
+    "correction_carried": Noul(
+        instructions={
+            "question": (
+                "Does `message` correct a belief or a decision that was already in place "
+                "before this conversation, rather than something that just happened in it?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
+        criteria={
+            "true": "The thing being corrected predates this conversation.",
+            "false": "The thing being corrected happened in this conversation, or nothing "
+            "is being corrected.",
+        },
+    ),
+    "praise_outcome": Noul(
+        instructions={
+            "question": (
+                "Does `message` approve of the state of things, rather than of a "
+                "particular action someone took?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
+        criteria={
+            "true": "It approves of the result or the current state.",
+            "false": "It approves of a specific action, or gives no approval.",
+        },
+    ),
+    "about_artifact": Noul(
+        instructions={
+            "question": (
+                "Does `message` name a particular file, command, or tool that the "
+                "statement is about?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
+        criteria={
+            "true": "It names a file, a command, or a tool.",
+            "false": "It is about the work in general, and names no particular thing.",
         },
     ),
 }
@@ -367,7 +418,9 @@ async def classify(
         session_id,
         entry_id,
         found.scope_key,
-        settings.classify_model,
+        # The versioned model, not the alias that was asked for, because the
+        # alias moves and the answers move with it.
+        response.model,
         KINDS_FINGERPRINT,
         settings.classify_rounds,
         json.dumps(state),

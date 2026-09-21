@@ -62,11 +62,15 @@ class FakeModel:
         self.answers = answers
         self.state: dict | None = None
         self.questions: dict | None = None
+        # The versioned id a real response carries, not the alias it was asked
+        # for, because the alias moves and the answers move with it.
+        self.model = "jev-1.13.0"
 
     async def system_one(self, *, state, questions):
         self.state, self.questions = state, questions
         return SimpleNamespace(
-            nouls={kind: SimpleNamespace(noul=value) for kind, value in self.answers.items()}
+            model=self.model,
+            nouls={kind: SimpleNamespace(noul=value) for kind, value in self.answers.items()},
         )
 
 
@@ -290,19 +294,15 @@ class TestClassify:
         assert written["semantic"] == 0.91
         assert written["procedural"] == 0.12
 
-    async def test_no_highest_score_is_written_because_the_table_derives_it(self):
-        # best is greatest(...) in the schema, so the task does not send one and
-        # cannot disagree with the scores beside it.
+    async def test_the_versioned_model_is_written_rather_than_the_alias(self):
+        # Pin the version when tuning thresholds: the alias moves and the
+        # answers move with it, and the column would not show that it happened.
         store = one_round()
-        await classify(
-            "s1",
-            "e9",
-            settings=Settings(),
-            pool=store,
-            client=answering(semantic=0.91, procedural=0.12),
-        )
+        model = answering(semantic=0.91)
+        model.model = "jev-1.13.0"
+        await classify("s1", "e9", settings=Settings(), pool=store, client=model)
         _, values = store.written
-        assert len(values) == 7 + len(KIND_COLUMNS)
+        assert values[3] == "jev-1.13.0"
 
     async def test_the_reading_names_the_questions_it_was_asked(self):
         # The model name cannot do this job, because the questions move without
@@ -325,7 +325,9 @@ class TestClassify:
         await classify("s1", "e9", settings=Settings(), pool=store, client=model)
         assert model.questions == KINDS
 
-    async def test_the_kinds_are_the_six_the_record_can_hold(self):
+    async def test_the_kinds_are_the_nine_the_record_can_hold(self):
+        # Named rather than counted, so adding a question means changing this
+        # test on purpose and adding the column it writes.
         assert set(KINDS) == {
             "semantic",
             "procedural",
@@ -333,6 +335,9 @@ class TestClassify:
             "preference",
             "correction",
             "praise",
+            "correction_carried",
+            "praise_outcome",
+            "about_artifact",
         }
 
     async def test_a_window_with_nothing_in_it_is_never_sent_to_a_model(self):
@@ -355,9 +360,7 @@ class TestClassify:
         assert store.written is None
 
 
-@pytest.mark.parametrize(
-    "kind", ["semantic", "procedural", "prospective", "preference", "correction", "praise"]
-)
+@pytest.mark.parametrize("kind", KINDS)
 def test_every_question_judges_the_message_rather_than_the_window(kind):
     # Scoring the window means every message inherits whatever was corrected
     # earlier in it, which is how a message about a docket task scored 0.91 on
@@ -367,9 +370,7 @@ def test_every_question_judges_the_message_rather_than_the_window(kind):
     assert "`message`" in question.instructions["question"]
 
 
-@pytest.mark.parametrize(
-    "kind", ["semantic", "procedural", "prospective", "preference", "correction", "praise"]
-)
+@pytest.mark.parametrize("kind", KINDS)
 def test_every_kind_asks_one_question(kind):
     question = KINDS[kind]
     assert question.instructions["question"]

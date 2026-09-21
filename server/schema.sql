@@ -181,6 +181,13 @@ CREATE INDEX IF NOT EXISTS logs_harness
 -- grows: an entry the harness writes later falls inside a window that was
 -- already read, and the reading would no longer be reproducible from the
 -- record alone. This is the evidence of what the model saw.
+--
+-- The model is stored as the versioned id the model reports, not the alias that
+-- was asked for, because the alias moves and the answers move with it.
+--
+-- The scores fall in two groups. The first six say what kind of memory is in the
+-- message. The last three say what it is about, and they are asked on every
+-- message rather than only when their kind is present.
 CREATE TABLE IF NOT EXISTS classifications (
     id                    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id            text NOT NULL,
@@ -208,13 +215,9 @@ CREATE TABLE IF NOT EXISTS classifications (
     preference            real NOT NULL,
     correction            real NOT NULL,
     praise                real NOT NULL,
-
-    -- The highest probability any kind got, so the queue for the next stage is
-    -- a range scan rather than a walk through every verdict. Derived rather
-    -- than written, because it is a fact about the row and not a judgment.
-    best real GENERATED ALWAYS AS (
-        greatest(semantic, procedural, prospective, preference, correction, praise)
-    ) STORED,
+    correction_carried    real NOT NULL,
+    praise_outcome        real NOT NULL,
+    about_artifact        real NOT NULL,
 
     classified_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -226,14 +229,8 @@ CREATE TABLE IF NOT EXISTS classifications (
 CREATE UNIQUE INDEX IF NOT EXISTS classifications_window
     ON classifications (session_id, entry_id, model, questions_fingerprint);
 
-CREATE INDEX IF NOT EXISTS classifications_best
-    ON classifications (best DESC, classified_at DESC);
-
--- A threshold per kind, because a kind like praise fires on far more than it
--- should and one number for all six cannot separate them.
-CREATE INDEX IF NOT EXISTS classifications_correction
-    ON classifications (correction DESC)
-    WHERE correction >= 0.5;
+CREATE INDEX IF NOT EXISTS classifications_classified
+    ON classifications (classified_at DESC);
 
 CREATE INDEX IF NOT EXISTS classifications_scope
     ON classifications (scope_key, classified_at DESC);

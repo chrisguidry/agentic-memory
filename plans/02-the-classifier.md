@@ -85,10 +85,10 @@ Two things are left out of a window:
 
 ## The kinds
 
-Six questions, one per kind of memory the record can hold. Each one asks
-a single yes/no question, because the model returns the probability of
-that proposition and nothing else. Asking about degree would return the
-probability of "yes" rather than a degree.
+Six questions say what kind of memory is in the message, and three more say
+what it is about. Each one asks a single yes/no question, because the model
+returns the probability of that proposition and nothing else. Asking about
+degree would return the probability of "yes" rather than a degree.
 
 | Kind | The proposition |
 |---|---|
@@ -98,6 +98,16 @@ probability of "yes" rather than a degree.
 | Preference | How one of the speakers wants things done, or something they dislike |
 | Correction | One speaker pushing back on what the other did |
 | Praise | One speaker approving of the other's work or approach |
+| Correction, carried | The thing being corrected predates this conversation |
+| Praise, of the outcome | The approval is of the state of things, not of an action |
+| About an artifact | The message names a file, a command, or a tool |
+
+The last three are asked on every message rather than only when their kind is
+present. A question costs tokens and almost no time, because every question in
+a request is answered in one pass, and code decides what was relevant.
+
+Nothing is asked that code can compute exactly. Which speaker said it, and
+when, are already in the record, so no question covers them.
 
 Three kinds from the psychology of memory are absent.
 
@@ -140,15 +150,20 @@ injection has to weigh. The second pass is cheap as well, so the gate is
 there to keep marginal memories out.
 
 A threshold per kind is necessary, because the kinds do not fire at the
-same rate. Read over three days of one person's history, 353 messages,
-the median is 0.72 for prospective and 0.74 for preference, but 0.15 for
-correction and 0.28 for semantic. At a threshold of 0.5, 299 of the 353
-clear it on some kind, so one number for all six filters almost nothing.
+same rate. Read over three days of one person's history, 356 messages,
+the medians run from 0.09 for praise of an outcome to 0.41 for about an
+artifact. At a threshold of 0.5, 260 of the 356 clear it on some kind, so
+one number across the kinds filters very little.
 
-The same measurement says `best` is a poor queue. It is the highest kind
-on a row, and it is prospective or preference in 269 of the 353. A second
-stage told to read whatever scores highest would read those two and
-almost never the rest.
+How a question is worded moves the distribution more than any threshold
+does. Prospective first asked whether the message named something meant
+for later, and half the messages qualified, because in a working session
+nearly every message names something to do. Asking instead whether the
+commitment outlives the conversation moved its median from 0.72 to 0.37
+and cut the ones over 0.7 from 181 to 67. Preference moved the same way,
+from a median of 0.74 to 0.20. The provider's own guidance says a flat
+distribution is usually the criteria being wrong rather than the model,
+and this is what that looks like when it is fixed.
 
 ## What it does not do
 
@@ -163,6 +178,8 @@ almost never the rest.
   apart from the exchanges before it, and reaches back only as far as
   asked.
 - Every question inspects `message` and not the window.
+- Every question has a column to write to, so adding one means changing the
+  schema in the same commit.
 - An entry the harness wrote for itself is never scheduled, so a
   scheduled task always has something to read.
 - A prompt that arrives twice is read once, because the scheduled work is
@@ -181,7 +198,7 @@ almost never the rest.
   these questions. The provider publishes speed, price, and error rates
   and no accuracy table, so the first measurement is a hand-labelled
   sample of windows rather than a pipeline.
-- **Whether the six kinds are the right six.** They come from what the
+- **Whether the nine are the right nine.** They come from what the
   record can support, not from what the second pass needs.
 - **How a reading is superseded.** A window grows as a session
   continues, so a reading describes the window as it was when it was
