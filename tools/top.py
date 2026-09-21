@@ -5,18 +5,30 @@
 # ///
 """Watch what the loop is producing.
 
-Two panels. The top one is what is worth remembering, ranked, which is the
-list a turn would read. The bottom one is what the classifier is reading
-right now, so the list filling up can be seen happening.
+Three panels, because the pipeline has three places to look. The top one is what
+is worth remembering, ranked, which is the list a turn would read. The middle
+one is what the writer has just produced, in the order it produced it, so a
+statement that ranks low is still seen arriving. The bottom one is what the
+classifier is reading, which includes the messages it read and wrote nothing
+for.
+
+The last two are what make a message that never became a memory visible. A
+message below every threshold produces no row, so only the readings panel can
+show it.
 
 It polls the service rather than reading the database, so it shows what a turn
 would actually get. It reads the scope of the directory you run it from, the
 same way a session derives its own, so the default view is what that directory
 would be given.
 
+Three panels of ten want fifty-five rows of terminal, so each count is an upper
+bound and the frame gives way from the top down until it fits. The status line
+says how many were hidden.
+
     uv run tools/top.py
     uv run tools/top.py --all-scopes
     uv run tools/top.py --scope github.com/chrisguidry/agentic-memory --every 1
+    uv run tools/top.py --limit 5 --new 5 --read 5
 """
 
 import argparse
@@ -127,8 +139,45 @@ def ago(when: str | None, now: datetime) -> str:
     return f"{seconds // 86400}d"
 
 
+def written_panel(rows: list[dict]) -> Panel:
+    """The statements the writer has just produced, newest first.
+
+    A statement here can rank below everything in the panel above it and never
+    appear there, which is the point of this one: a plan or an approval is worth
+    watching arrive even when it is not worth reading yet.
+    """
+    if not rows:
+        body = Text("nothing written yet.", style="dim")
+    else:
+        table = Table(box=None, pad_edge=False, expand=True, show_header=False, padding=(0, 1))
+        table.add_column("when", width=6, style="dim", no_wrap=True, justify="right")
+        table.add_column("what", ratio=1, no_wrap=True, overflow="ellipsis")
+        now = datetime.now(UTC)
+        for row in rows:
+            colour = KIND_STYLE.get(row["kind"], "white")
+            where = row["scope_key"] or "everywhere"
+            table.add_row(
+                ago(row["created_at"], now),
+                Text(row["kind"], style=colour)
+                + Text(f"  {row['rank']:.2f}  {where}  ", style="dim")
+                + Text(" ".join(row["statement"].split())),
+            )
+        body = table
+
+    return Panel(
+        body,
+        title="[bold]just written[/bold]",
+        subtitle=f"[dim]{len(rows)} statement{'s' if len(rows) != 1 else ''}[/dim]",
+        border_style="magenta",
+    )
+
+
 def readings_panel(rows: list[dict]) -> Panel:
-    """What the classifier read most recently, highest first."""
+    """What the classifier read most recently, newest first.
+
+    A message that cleared no threshold is here and nowhere else, which is how a
+    reading that produced no memory is still seen.
+    """
     if not rows:
         body = Text("nothing read yet.", style="dim")
     else:
@@ -156,35 +205,82 @@ def readings_panel(rows: list[dict]) -> Panel:
     return Panel(
         body,
         title="[bold]just read[/bold]",
+        subtitle=f"[dim]{len(rows)} reading{'s' if len(rows) != 1 else ''}[/dim]",
         border_style="blue",
     )
 
 
-def frame(args, state: dict) -> Group:
-    """One redraw, from whatever the last poll returned."""
-    if state.get("error"):
-        top = Panel(Text(state["error"], style="red"), title="top of mind", border_style="red")
-        bottom = Panel(Text(""), title="just read", border_style="red")
-        return Group(top, bottom)
+# What the three panels cost in rows besides the rows of statements: two borders
+# each and one line for the status.
+PANEL_CHROME = 7
 
+# A top-of-mind row is a header line and a statement cut to two, and a long kind
+# or scope can push it to three, so the fit is planned against three. Planning
+# high costs a row of statements, and planning low costs a panel.
+TOP_OF_MIND_ROW = 3
+
+
+def fitting(args) -> tuple[int, int, int]:
+    """How many statements each panel draws, given the rows the terminal has.
+
+    A panel that runs off the bottom of the terminal is the panel nobody reads,
+    so every count from the command line is an upper bound. The list at the top
+    gives way first and the two feeds at the bottom give way last, because the
+    feeds are what a person is watching.
+    """
+    room = console.height - PANEL_CHROME
+    limit, new, read = args.limit, args.new, args.read
+    while limit > 1 and TOP_OF_MIND_ROW * limit + new + read > room:
+        limit -= 1
+    while new > 1 and TOP_OF_MIND_ROW * limit + new + read > room:
+        new -= 1
+    while read > 1 and TOP_OF_MIND_ROW * limit + new + read > room:
+        read -= 1
+    return limit, new, read
+
+
+def status(args, counts: tuple[int, int, int]) -> str:
+    """What is drawn, and what the terminal had no room for."""
+    named = (
+        ("top of mind", args.limit, counts[0]),
+        ("just written", args.new, counts[1]),
+        ("just read", args.read, counts[2]),
+    )
+    drawn = " · ".join(
+        f"{drew} {name}" if drew == asked else f"{drew} of {asked} {name}"
+        for name, asked, drew in named
+    )
+    return f"  {drawn} · polling {args.endpoint}"
+
+
+def frame(args, state: dict) -> Group:
+    """One redraw, from whatever the last poll returned, fitted to the terminal."""
+    if state.get("error"):
+        return Group(
+            Panel(Text(state["error"], style="red"), title="top of mind", border_style="red"),
+            Panel(Text(""), title="just written"),
+            Panel(Text(""), title="just read"),
+        )
+
+    limit, new, read = fitting(args)
     return Group(
-        memories_panel(state.get("memories", []), args.scope),
-        readings_panel(state.get("readings", [])[: args.read]),
-        Text(
-            f"  {state.get('shown', 0)} statements shown · "
-            f"{state.get('read', 0)} messages read · polling {args.endpoint}",
-            style="dim",
-        ),
+        memories_panel(state.get("memories", [])[:limit], args.scope),
+        written_panel(state.get("written", [])[:new]),
+        readings_panel(state.get("readings", [])[:read]),
+        Text(status(args, (limit, new, read)), style="dim"),
     )
 
 
 def poll(args, state: dict) -> None:
-    """Get the two lists, and remember how they failed rather than raising."""
+    """Get the three lists, and remember how they failed rather than raising."""
     try:
-        state["memories"] = fetch(args.endpoint, "/memories", scope_key=args.scope, limit=args.limit)
+        state["memories"] = fetch(
+            args.endpoint, "/memories", scope_key=args.scope, limit=args.limit, order="rank"
+        )
+        state["written"] = fetch(
+            args.endpoint, "/memories", scope_key=args.scope, limit=args.new, order="newest"
+        )
         state["readings"] = fetch(args.endpoint, "/classifications", above=0.0, limit=args.read)
-        state["read"] = len(state["readings"])
-        state["shown"] = len(state["memories"])
         state["error"] = None
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as problem:
         state["error"] = f"cannot reach the service at {args.endpoint}: {problem}"
@@ -203,8 +299,9 @@ def main() -> None:
         action="store_true",
         help="read from every scope, rather than this directory's",
     )
-    parser.add_argument("--limit", type=int, default=10, help="how many statements to show")
-    parser.add_argument("--read", type=int, default=6, help="how many recent readings to show")
+    parser.add_argument("--limit", type=int, default=10, help="how many top-of-mind statements")
+    parser.add_argument("--new", type=int, default=10, help="how many recently written statements")
+    parser.add_argument("--read", type=int, default=10, help="how many recent readings")
     parser.add_argument("--every", type=float, default=2.0, help="seconds between polls")
     args = parser.parse_args()
 

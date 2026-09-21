@@ -53,6 +53,11 @@ CANDIDATES = 40
 # A statement and everything above it. The scope is a path, so a statement about
 # an organization is reachable from a repository inside it, and a statement with
 # no scope is reachable from everywhere.
+#
+# A read takes the whole reachable slice and orders it in Python, because the rank
+# comes from the kind and the age and Postgres has neither number. A slice is
+# hundreds of rows, so the sort is cheap, and a slice that stops being cheap wants
+# the rank kept as a column.
 REACHABLE = """
     SELECT id, statement, kind, score, scope_key, session_id, entry_id,
            model, said_at, created_at
@@ -78,13 +83,6 @@ STANDING = (
       AND said_at < $3
     ORDER BY said_at DESC
     LIMIT $4
-"""
-)
-
-READ = (
-    REACHABLE
-    + """
-    ORDER BY said_at DESC NULLS LAST, created_at DESC
 """
 )
 
@@ -115,11 +113,26 @@ def worth(row: dict[str, Any], now: datetime | None = None) -> float:
     return weight * (floor + (1 - floor) * 0.5 ** (age_in_days / half_life))
 
 
+def scored(rows: Iterable[dict[str, Any]], now: datetime | None = None) -> list[dict]:
+    """Every statement with the rank it would be read at."""
+    moment = now or datetime.now(UTC)
+    return [{**row, "rank": worth(row, moment)} for row in rows]
+
+
 def ranked(rows: Iterable[dict[str, Any]], now: datetime | None = None) -> list[dict]:
     """The statements in the order a scope reads them, best first."""
-    moment = now or datetime.now(UTC)
-    scored = [{**row, "rank": worth(row, moment)} for row in rows]
-    return sorted(scored, key=lambda row: (row["rank"], row["created_at"]), reverse=True)
+    return sorted(scored(rows, now), key=lambda row: (row["rank"], row["created_at"]), reverse=True)
+
+
+def newest(rows: Iterable[dict[str, Any]], now: datetime | None = None) -> list[dict]:
+    """The statements in the order the writer wrote them, last one first."""
+    return sorted(scored(rows, now), key=lambda row: row["created_at"], reverse=True)
+
+
+# The two orders a scope is read in. `rank` is what a turn is handed. `newest` is
+# what the writer last produced, so a statement that ranks low, or that ranks low
+# only because it is young, can still be watched arriving.
+ORDERINGS = {"rank": ranked, "newest": newest}
 
 
 async def standing(
@@ -160,15 +173,21 @@ async def memories(
     scope_key: str | None = None,
     limit: int = 50,
     now: datetime | None = None,
+    order: str = "rank",
 ) -> list[dict]:
-    """What is worth remembering for a place, best first.
+    """What is worth remembering for a place.
 
     A statement is reachable from a scope when it is scoped to that scope, to
     any scope above it, or to none, so nothing has to be declared for a
     statement about a repository to reach a directory inside it.
+
+    `rank` is what a turn is handed. `newest` is what the writer last produced,
+    in the order it wrote them, which is how a statement that ranks low is still
+    seen arriving. Every row has its rank either way, so a reader can tell the
+    two orders apart.
     """
-    found = await pool.fetch(READ, scope_key)
-    return ranked((dict(row) for row in found), now)[:limit]
+    found = await pool.fetch(REACHABLE, scope_key)
+    return ORDERINGS[order]((dict(row) for row in found), now)[:limit]
 
 
 async def retire(

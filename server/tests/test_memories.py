@@ -18,6 +18,7 @@ from agentic_memory.memories import (
     memories,
     ranked,
     retire,
+    scored,
     standing,
     worth,
 )
@@ -34,14 +35,17 @@ def statement(
     age_in_days: float = 0.0,
     statement_id: int = 1,
     statement: str = "Postgres is the store.",
+    written_in_days: float | None = None,
 ) -> dict:
     """One statement, as the store hands it back.
 
     The age is on `said_at`, which is when the message was said. `created_at` is
     when the statement was written, and a backfill makes that the same minute for
-    a year of statements.
+    a year of statements. `written_in_days` separates the two when a test needs
+    them apart.
     """
     said = days_ago(age_in_days)
+    written = said if written_in_days is None else days_ago(written_in_days)
     return {
         "id": statement_id,
         "statement": statement,
@@ -52,7 +56,7 @@ def statement(
         "entry_id": "e1",
         "model": "jev-1.13.0",
         "said_at": said,
-        "created_at": said,
+        "created_at": written,
     }
 
 
@@ -132,6 +136,10 @@ class TestRanked:
         ranked([one], NOW)
         assert "rank" not in one
 
+    def test_scoring_leaves_the_rows_in_the_order_they_arrived(self):
+        rows = [statement("prospective", statement_id=1), statement("preference", statement_id=2)]
+        assert [row["id"] for row in scored(rows, NOW)] == [1, 2]
+
 
 class TestStanding:
     async def test_the_scope_the_kinds_the_moment_and_the_cap_go_to_the_query(self):
@@ -178,6 +186,32 @@ class TestMemories:
         )
         found = await memories(pool, limit=1, now=NOW)
         assert [row["id"] for row in found] == [2]
+
+    async def test_the_newest_order_is_by_when_the_writer_wrote_it(self):
+        # A statement written just now can rank below one written yesterday,
+        # which is the difference between the two orders.
+        pool = FakePool(
+            rows=[
+                statement("prospective", statement_id=1, written_in_days=0),
+                statement("preference", statement_id=2, written_in_days=1),
+            ]
+        )
+        newest = await memories(pool, order="newest", now=NOW)
+        by_rank = await memories(pool, order="rank", now=NOW)
+        assert [row["id"] for row in newest] == [1, 2]
+        assert [row["id"] for row in by_rank] == [2, 1]
+
+    async def test_the_newest_order_is_narrowed_to_the_scope_too(self):
+        pool = FakePool()
+        await memories(pool, scope_key="github.com/liken-sh", order="newest")
+        assert pool.asked == [("github.com/liken-sh",)]
+
+    async def test_every_row_carries_a_rank_in_both_orders(self):
+        # A reader that shows the two lists together needs to tell them apart.
+        pool = FakePool(rows=[statement()])
+        for order in ("rank", "newest"):
+            found = await memories(pool, order=order, now=NOW)
+            assert found[0]["rank"] == pytest.approx(1.0)
 
 
 class TestRetire:

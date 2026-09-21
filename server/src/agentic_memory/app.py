@@ -8,6 +8,7 @@ It derives nothing itself, and it calls no model.
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
+from typing import Literal
 
 import uvicorn
 from docket import Docket
@@ -180,16 +181,19 @@ async def memories(
     request: Request,
     scope_key: str | None = None,
     limit: int = Query(50, ge=1, le=500),
+    order: Literal["rank", "newest"] = "rank",
 ) -> list[dict]:
     """What is worth remembering, for a place.
 
     Retrieval walks up the scope path, so a statement about a repository is
     reachable from any directory in it. A statement scoped to nothing is
-    reachable from everywhere. What comes back is ordered by the ranking, which
-    weighs the kind and the age of each statement, and a statement a newer one
-    replaced is not in it.
+    reachable from everywhere. `rank` orders what a turn is handed, which weighs
+    the kind and the age of each statement. `newest` orders what the writer last
+    produced. A statement a newer one replaced is in neither.
     """
-    return await statements.memories(request.app.state.pool, scope_key=scope_key, limit=limit)
+    return await statements.memories(
+        request.app.state.pool, scope_key=scope_key, limit=limit, order=order
+    )
 
 
 @app.post("/rebuild")
