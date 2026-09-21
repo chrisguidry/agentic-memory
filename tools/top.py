@@ -10,11 +10,13 @@ list a turn would read. The bottom one is what the classifier is reading
 right now, so the list filling up can be seen happening.
 
 It polls the service rather than reading the database, so it shows what a turn
-would actually get.
+would actually get. It reads the scope of the directory you run it from, the
+same way a session derives its own, so the default view is what that directory
+would be given.
 
     uv run tools/top.py
-    uv run tools/top.py --scope github.com/chrisguidry/agentic-memory
-    uv run tools/top.py --endpoint http://127.0.0.1:4318 --every 1
+    uv run tools/top.py --all-scopes
+    uv run tools/top.py --scope github.com/chrisguidry/agentic-memory --every 1
 """
 
 import argparse
@@ -23,12 +25,15 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+from scope import scope_of
 
 console = Console()
 
@@ -63,10 +68,15 @@ def memories_panel(rows: list[dict], scope: str | None) -> Panel:
         for row in rows:
             colour = KIND_STYLE.get(row["kind"], "white")
             where = row["scope_key"] or "everywhere"
+            # A statement scoped above this one is reached by inheritance, and
+            # saying so is the difference between a list of what is here and a
+            # list of everything the turn was handed.
+            inherited = scope is not None and where not in ("everywhere", scope)
+            note = f"{where} \u2191" if inherited else where
             table.add_row(
                 f"{row['score']:.2f}",
                 Text(row["kind"], style=colour),
-                Text(row["statement"]) + Text(f"\n{where}", style="dim"),
+                Text(row["statement"]) + Text(f"\n{note}", style="dim"),
             )
         body = table
 
@@ -147,10 +157,25 @@ def poll(args, state: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--endpoint", default="http://127.0.0.1:4318")
-    parser.add_argument("--scope", default=None, help="a scope to read from, or all of them")
+    parser.add_argument(
+        "--scope",
+        default=None,
+        help="a scope to read from. Defaults to this directory's scope.",
+    )
+    parser.add_argument(
+        "--all-scopes",
+        action="store_true",
+        help="read from every scope, rather than this directory's",
+    )
     parser.add_argument("--limit", type=int, default=25)
     parser.add_argument("--every", type=float, default=2.0, help="seconds between polls")
     args = parser.parse_args()
+
+    if args.all_scopes:
+        args.scope = None
+    elif args.scope is None:
+        args.scope, named = scope_of(Path.cwd())
+        console.print(f"[dim]scope {args.scope}, named by its {named}[/dim]")
 
     state: dict = {}
     with Live(frame(args, state), console=console, refresh_per_second=4) as live:
