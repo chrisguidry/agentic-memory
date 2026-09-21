@@ -9,13 +9,21 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 
-import asyncpg
 import uvicorn
 from docket import Docket
 from fastapi import FastAPI, Query, Request
 
 from . import db
-from .classify import classify, readable_prompts, task_key, worth_reading
+from . import synthesize as writer
+from .classify import (
+    KIND_COLUMNS,
+    classify,
+    readable_prompts,
+    statement_key,
+    task_key,
+    worth_reading,
+)
+from .db import store_pool
 from .otlp import walk
 from .settings import get_settings
 
@@ -26,9 +34,7 @@ log = logging.getLogger("agentic_memory")
 async def lifespan(app: FastAPI):
     settings = get_settings()
     async with AsyncExitStack() as stack:
-        app.state.pool = await stack.enter_async_context(
-            asyncpg.create_pool(settings.database_url, min_size=1, max_size=4)
-        )
+        app.state.pool = await stack.enter_async_context(store_pool())
         # The service schedules work and never runs it, so a model call cannot
         # hold up an ingest. The worker holds the same docket and reads there.
         app.state.docket = await stack.enter_async_context(
@@ -110,6 +116,7 @@ async def classifications(
     """
     return await db.classified(
         request.app.state.pool,
+        kinds=KIND_COLUMNS,
         scope_key=scope_key,
         session_id=session_id,
         above=above,
@@ -142,6 +149,41 @@ async def reread(
         "candidates": len(prompts),
         "scheduled": await schedule(request.app.state.docket, prompts),
     }
+
+
+@app.post("/write")
+async def write(request: Request) -> dict:
+    """Write statements for every reading that is still worth one.
+
+    The writing normally follows a reading on its own. This runs it over the
+    readings already stored, which is what makes the second pass tunable: its
+    thresholds can move and the statements be written again from the same
+    readings.
+    """
+    wanted = await writer.worth_writing(request.app.state.pool)
+    for session_id, entry_id in wanted:
+        try:
+            await request.app.state.docket.add(
+                writer.synthesize, key=statement_key(session_id, entry_id)
+            )(session_id, entry_id)
+        except Exception:
+            log.warning("could not schedule writing %s %s", session_id, entry_id, exc_info=True)
+    return {"candidates": len(wanted)}
+
+
+@app.get("/memories")
+async def memories(
+    request: Request,
+    scope_key: str | None = None,
+    limit: int = Query(50, ge=1, le=500),
+) -> list[dict]:
+    """What is worth remembering, for a place.
+
+    Retrieval walks up the scope path, so a statement about a repository is
+    reachable from any directory in it. A statement scoped to nothing is
+    reachable from everywhere.
+    """
+    return await db.memories(request.app.state.pool, scope_key=scope_key, limit=limit)
 
 
 @app.post("/rebuild")

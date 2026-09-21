@@ -86,8 +86,9 @@ services:
     environment:
       AGENTIC_MEMORY_DATABASE_URL: postgresql://agentic_memory:agentic_memory@postgres:5432/agentic_memory
       AGENTIC_MEMORY_REDIS_URL: redis://redis:6379/0
-      # The key keeps its own name because that is what the SDK looks for.
+      # The keys keep their own names because that is what the clients look for.
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:?run direnv allow, or export TYPESAFE_API_KEY}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:?run direnv allow, or export DEEPINFRA_API_KEY}
     volumes:
       # Read-only, so the container never writes into the working tree.
       - ./server/src:/app/src:ro

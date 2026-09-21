@@ -236,3 +236,39 @@ CREATE INDEX IF NOT EXISTS classifications_classified
 
 CREATE INDEX IF NOT EXISTS classifications_scope
     ON classifications (scope_key, classified_at DESC);
+
+-- One sentence a person would want to read again, written from a message the
+-- classifier scored highly. This is the first thing in the system that is a
+-- memory rather than a record of something that happened.
+--
+-- A null scope means the statement holds everywhere. Retrieval walks up the
+-- scope path from where the session is, so a null is reachable from any of it.
+CREATE TABLE IF NOT EXISTS memories (
+    id                    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    statement             text NOT NULL,
+
+    -- Which question produced it, and how sure that reading was. The score is
+    -- what the ranking reads.
+    kind                  text NOT NULL,
+    score                 real NOT NULL,
+    scope_key             text,
+
+    -- The message it came from, so a statement can always be traced back to the
+    -- words that produced it.
+    session_id            text NOT NULL,
+    entry_id              text NOT NULL,
+    model                 text NOT NULL,
+    questions_fingerprint text NOT NULL,
+    created_at            timestamptz NOT NULL DEFAULT now()
+);
+
+-- One statement per message per kind per question set, so a retry writes
+-- nothing and one message can carry a fact and a rule at once.
+CREATE UNIQUE INDEX IF NOT EXISTS memories_source
+    ON memories (session_id, entry_id, kind, questions_fingerprint);
+
+CREATE INDEX IF NOT EXISTS memories_scope
+    ON memories (scope_key, score DESC);
+
+CREATE INDEX IF NOT EXISTS memories_recent
+    ON memories (created_at DESC);

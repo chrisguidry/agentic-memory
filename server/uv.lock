@@ -9,6 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic-settings" },
     { name = "pydocket" },
     { name = "typesafe-sdk" },
@@ -17,7 +18,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -27,6 +27,7 @@ dev = [
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pydocket", specifier = ">=0.25" },
     { name = "typesafe-sdk", specifier = ">=0.7" },
@@ -35,7 +36,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "ruff", specifier = ">=0.8" },

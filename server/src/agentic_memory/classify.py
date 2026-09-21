@@ -22,9 +22,10 @@ from datetime import datetime
 from typing import Any
 
 import asyncpg
-from docket import Depends, Shared
+from docket import CurrentDocket, Depends, Docket, Shared
 from typesafe_sdk import AsyncTypeSafeClient, Noul
 
+from .db import store_pool
 from .settings import Settings, get_settings
 
 log = logging.getLogger("agentic_memory.classify")
@@ -372,6 +373,11 @@ def task_key(session_id: str, entry_id: str) -> str:
     return f"classify:{session_id}:{entry_id}:{KINDS_FINGERPRINT}"
 
 
+def statement_key(session_id: str, entry_id: str) -> str:
+    """The name of one scheduled piece of writing, keyed the same way."""
+    return f"synthesize:{session_id}:{entry_id}:{KINDS_FINGERPRINT}"
+
+
 async def readable_prompts(
     pool: asyncpg.Pool,
     *,
@@ -388,17 +394,6 @@ async def readable_prompts(
     """
     found = await pool.fetch(READABLE, since, until, harness, limit)
     return worth_reading([(row["session_id"], row["entry_id"], row["body"]) for row in found])
-
-
-@asynccontextmanager
-async def store_pool():
-    """The store, opened once and shared by every task on a worker."""
-    settings = get_settings()
-    pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=4)
-    try:
-        yield pool
-    finally:
-        await pool.close()
 
 
 @asynccontextmanager
@@ -419,6 +414,7 @@ async def classify(
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Shared(store_pool),
     client: AsyncTypeSafeClient = Shared(model_client),
+    docket: Docket = CurrentDocket(),
 ) -> None:
     """Read one message and write down what kinds of memory are in it."""
     found = await window(pool, session_id, entry_id, settings.classify_rounds)
@@ -452,3 +448,11 @@ async def classify(
         *(verdicts[kind] for kind in KIND_COLUMNS),
     )
     log.info("read %s %s: %s", session_id, entry_id, verdicts)
+
+    # A message that cleared no threshold never reaches the larger model, which
+    # is where the cost is. The import is here because the writer reads this
+    # module for the question set, and a module-level import would be a cycle.
+    from .synthesize import THRESHOLDS, synthesize
+
+    if any(verdicts[kind] >= THRESHOLDS[kind] for kind in THRESHOLDS):
+        await docket.add(synthesize, key=statement_key(session_id, entry_id))(session_id, entry_id)

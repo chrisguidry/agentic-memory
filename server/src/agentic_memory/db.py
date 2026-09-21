@@ -11,14 +11,48 @@ raw one does not.
 
 import json
 import logging
+from collections.abc import Sequence
+from contextlib import asynccontextmanager
 from typing import Any, NamedTuple
 
 import asyncpg
 
-from .classify import KIND_COLUMNS
 from .otlp import raw, resource_row, row, scope_row
 
 log = logging.getLogger("agentic_memory")
+
+
+async def open_pool(database_url: str, *, size: int = 4) -> asyncpg.Pool:
+    """A pool that hands jsonb columns back as Python objects.
+
+    asyncpg returns jsonb as text unless a codec says otherwise. Every reading
+    and every statement in this service is stored in a jsonb column, so the
+    codec belongs on the connection rather than at each call site.
+    """
+
+    async def prepare(connection: asyncpg.Connection) -> None:
+        for kind in ("json", "jsonb"):
+            await connection.set_type_codec(
+                kind, encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
+            )
+
+    return await asyncpg.create_pool(database_url, min_size=1, max_size=size, init=prepare)
+
+
+@asynccontextmanager
+async def store_pool():
+    """The store, opened once and shared by every task on a worker.
+
+    One pool serves both tasks: the reader and the writer are the same kind of
+    work, and giving each its own would open two pools for no reason.
+    """
+    from .settings import get_settings
+
+    pool = await open_pool(get_settings().database_url)
+    try:
+        yield pool
+    finally:
+        await pool.close()
 
 
 class Stored(NamedTuple):
@@ -379,37 +413,85 @@ async def recent(
 async def classified(
     pool: asyncpg.Pool,
     *,
+    kinds: Sequence[str],
     scope_key: str | None = None,
     session_id: str | None = None,
     above: float = 0.0,
     kind: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """The messages the classifier read, above a probability the caller picks.
+    """The messages the classifier read, highest first.
 
     The threshold arrives with the query rather than sitting in the table,
     because the reading is a probability and the decision about it belongs to
-    whoever is asking. It can be set per kind, because the kinds do not fire at
-    the same rate.
+    whoever is asking. Name a kind to measure that kind, because the kinds do
+    not fire at the same rate and one number across them filters very little.
+    Name none to get the most recent readings, which is what watching the loop
+    needs.
 
     The message comes back with the reading, because calibration is reading a
     page of messages next to what the model made of them.
     """
-    if kind is not None and kind not in KIND_COLUMNS:
+    # The kind names are the column names, and the module that asks the
+    # questions owns them. Taking them here rather than importing them keeps
+    # this module from depending on the reader.
+    if kind is not None and kind not in kinds:
         raise ValueError(f"unknown kind {kind!r}")
 
-    measured = kind or "best"
-    query = f"""
-        SELECT session_id, entry_id, scope_key, model, questions_fingerprint,
-               rounds, state->>'message' AS message,
-               {", ".join(KIND_COLUMNS)}, best, classified_at
-        FROM classifications
-        WHERE {measured} >= $1
-          AND ($2::text IS NULL OR scope_key = $2)
-          AND ($3::text IS NULL OR session_id = $3)
-        ORDER BY {measured} DESC, classified_at DESC
-        LIMIT $4
+    readings = (
+        "SELECT session_id, entry_id, scope_key, model, questions_fingerprint,"
+        " rounds, state->>'message' AS message,"
+        f" {', '.join(kinds)}, classified_at"
+        " FROM classifications"
+    )
+
+    if kind is None:
+        query = (
+            readings
+            + " WHERE ($1::text IS NULL OR scope_key = $1)"
+            + " AND ($2::text IS NULL OR session_id = $2)"
+            + " ORDER BY classified_at DESC LIMIT $3"
+        )
+        values = (scope_key, session_id, limit)
+    else:
+        query = (
+            readings
+            + f" WHERE {kind} >= $1 AND ({kind} IS NOT NULL)"
+            + " AND ($2::text IS NULL OR scope_key = $2)"
+            + " AND ($3::text IS NULL OR session_id = $3)"
+            + f" ORDER BY {kind} DESC LIMIT $4"
+        )
+        values = (above, scope_key, session_id, limit)
+
+    async with pool.acquire() as connection:
+        found = await connection.fetch(query, *values)
+    return [dict(record) for record in found]
+
+
+async def memories(
+    pool: asyncpg.Pool,
+    *,
+    scope_key: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """What is worth remembering, for a place.
+
+    A statement is reachable from a scope when it is scoped to that scope, to
+    any scope above it, or to none. The scope is a path, so a statement about a
+    repository is reachable from a directory inside it without anyone having
+    declared that.
+    """
+    query = """
+        SELECT id, statement, kind, score, scope_key, session_id, entry_id,
+               model, created_at
+        FROM memories
+        WHERE $1::text IS NULL
+           OR scope_key IS NULL
+           OR scope_key = $1
+           OR $1 LIKE scope_key || '%'
+        ORDER BY score DESC, created_at DESC
+        LIMIT $2
     """
     async with pool.acquire() as connection:
-        found = await connection.fetch(query, above, scope_key, session_id, limit)
+        found = await connection.fetch(query, scope_key, limit)
     return [dict(record) for record in found]

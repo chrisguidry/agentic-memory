@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     typesafe_api_key: str = Field("", validation_alias="TYPESAFE_API_KEY")
     classify_model: str = "jev-latest"
 
+    # The model that turns a message into a sentence. It is a large model on
+    # purpose: writing one sentence a person would want to read again is the
+    # part that needs judgment, and it runs on a fraction of the messages.
+    deepinfra_api_key: str = Field("", validation_alias="DEEPINFRA_API_KEY")
+    synthesize_model: str = "deepseek-ai/DeepSeek-V4.1-Flash"
+
     # How many exchanges of a session go into the window. A reply means
     # something next to what it replies to, so the window holds both sides.
     classify_rounds: int = 5

@@ -55,6 +55,21 @@ class FakeStore:
         self.written = (query, values)
 
 
+class FakeDocket:
+    """A docket that records what was scheduled instead of scheduling it."""
+
+    def __init__(self):
+        self.scheduled: list[tuple[str | None, tuple]] = []
+
+    def add(self, task, *, key=None):
+        # The real one is sync and returns something awaitable, so a fake that
+        # is async would pass a coroutine where a callable is expected.
+        async def scheduled(*args):
+            self.scheduled.append((key, args))
+
+        return scheduled
+
+
 class FakeModel:
     """A System One model that answers with what it was told to answer."""
 
@@ -249,7 +264,14 @@ class TestClassify:
             before=[said(50, "prompt", "earlier")],
         )
         model = FakeModel(semantic=0.9)
-        await classify("s1", "e9", settings=Settings(), pool=store, client=model)
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(),
+            pool=store,
+            client=model,
+            docket=FakeDocket(),
+        )
         assert model.state == {"before": "[person] earlier", "message": "the message"}
 
     async def test_the_verdicts_are_written_against_the_entry_that_was_read(self):
@@ -260,6 +282,7 @@ class TestClassify:
             settings=Settings(),
             pool=store,
             client=answering(semantic=0.91, procedural=0.12),
+            docket=FakeDocket(),
         )
         _, values = store.written
         assert values[:2] == ("s1", "e9")
@@ -275,6 +298,7 @@ class TestClassify:
             settings=Settings(),
             pool=store,
             client=answering(**{kind: 0.5 for kind in KINDS}),
+            docket=FakeDocket(),
         )
         _, values = store.written
         written = dict(zip(KIND_COLUMNS, values[7:], strict=True))
@@ -288,6 +312,7 @@ class TestClassify:
             settings=Settings(),
             pool=store,
             client=answering(semantic=0.91, procedural=0.12),
+            docket=FakeDocket(),
         )
         _, values = store.written
         written = dict(zip(KIND_COLUMNS, values[7:], strict=True))
@@ -300,7 +325,14 @@ class TestClassify:
         store = one_round()
         model = answering(semantic=0.91)
         model.model = "jev-1.13.0"
-        await classify("s1", "e9", settings=Settings(), pool=store, client=model)
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(),
+            pool=store,
+            client=model,
+            docket=FakeDocket(),
+        )
         _, values = store.written
         assert values[3] == "jev-1.13.0"
 
@@ -315,6 +347,7 @@ class TestClassify:
             settings=Settings(),
             pool=store,
             client=answering(semantic=0.91),
+            docket=FakeDocket(),
         )
         _, values = store.written
         assert values[4] == KINDS_FINGERPRINT
@@ -322,7 +355,14 @@ class TestClassify:
     async def test_the_model_is_asked_about_every_kind(self):
         store = one_round()
         model = FakeModel(semantic=0.91)
-        await classify("s1", "e9", settings=Settings(), pool=store, client=model)
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(),
+            pool=store,
+            client=model,
+            docket=FakeDocket(),
+        )
         assert model.questions == KINDS
 
     async def test_the_kinds_are_the_eleven_the_record_can_hold(self):
@@ -345,7 +385,14 @@ class TestClassify:
     async def test_a_window_with_nothing_in_it_is_never_sent_to_a_model(self):
         store = FakeStore(target=None, recent=[], before=[])
         model = FakeModel(semantic=0.9)
-        await classify("s1", "e9", settings=Settings(), pool=store, client=model)
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(),
+            pool=store,
+            client=model,
+            docket=FakeDocket(),
+        )
         assert model.state is None
 
     async def test_a_partial_answer_is_not_written(self):
@@ -358,6 +405,7 @@ class TestClassify:
             settings=Settings(),
             pool=store,
             client=FakeModel(semantic=0.91),
+            docket=FakeDocket(),
         )
         assert store.written is None
 

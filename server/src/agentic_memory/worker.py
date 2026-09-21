@@ -11,12 +11,13 @@ from docket import Docket, Worker
 
 from .classify import classify
 from .settings import get_settings
+from .synthesize import synthesize
 
 log = logging.getLogger("agentic_memory.worker")
 
 # Every task the worker can run. A docket holds a name rather than a
 # reference, so a task that is not here is one the worker cannot run.
-TASKS = (classify,)
+TASKS = (classify, synthesize)
 
 
 async def serve() -> None:
