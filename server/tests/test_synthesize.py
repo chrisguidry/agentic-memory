@@ -5,18 +5,22 @@ wraps its answer in prose, or answers a question about a rule with a fact,
 produces something that parses and is wrong.
 """
 
+import inspect
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import asyncpg
 import pytest
 
 from agentic_memory.classify import KIND_COLUMNS, questions_fingerprint
 from agentic_memory.settings import Settings
 from agentic_memory.synthesize import (
     THRESHOLDS,
+    ask,
     parse,
     synthesize,
+    worth_writing,
     write,
     writing_from,
 )
@@ -83,6 +87,7 @@ class FakeModel:
 
     async def post(self, url, *, headers, json):
         self.asked = json["messages"][1]["content"]
+        self.limit = json["max_tokens"]
         return SimpleNamespace(
             raise_for_status=lambda: None,
             json=lambda: {"choices": [{"message": {"content": self.reply}}]},
@@ -383,3 +388,113 @@ class TestSynthesize:
 @pytest.mark.parametrize("kind", sorted(THRESHOLDS))
 def test_every_threshold_is_a_probability(kind):
     assert 0.0 < THRESHOLDS[kind] < 1.0
+
+
+async def said(store: asyncpg.Pool, entry_id: str, at: datetime | None) -> None:
+    """The record of one message, said at a moment, or at none."""
+    # The maps every record points at, made once. A statement cannot read a
+    # row its own CTE inserted, so these are two statements of their own.
+    await store.execute(
+        "INSERT INTO resources (fingerprint, resource) VALUES ('r', '{}') ON CONFLICT DO NOTHING"
+    )
+    await store.execute("INSERT INTO scopes (fingerprint) VALUES ('s') ON CONFLICT DO NOTHING")
+    export_id = await store.fetchval(
+        """
+        INSERT INTO otel_exports (session_id, entry_id, resource_id, scope_id, record)
+        VALUES ('s1', $1, (SELECT id FROM resources), (SELECT id FROM scopes), '{}')
+        RETURNING id
+        """,
+        entry_id,
+    )
+    await store.execute(
+        """
+        INSERT INTO logs
+            (export_id, received_at, resource_id, scope_id, occurred_at, attributes,
+             session_id, entry_id, kind)
+        VALUES ($1, now(), (SELECT id FROM resources), (SELECT id FROM scopes), $2, '{}',
+                's1', $3, 'prompt')
+        """,
+        export_id,
+        at,
+        entry_id,
+    )
+
+
+async def read(store: asyncpg.Pool, entry_id: str, classified_at: datetime, **scores) -> None:
+    """One reading that cleared the correction threshold, read at a moment."""
+    columns = dict.fromkeys(KIND_COLUMNS, 0.05) | {"correction": 0.9} | scores
+    await store.execute(
+        f"""
+        INSERT INTO classifications
+            (session_id, entry_id, model, questions_fingerprint, rounds, state,
+             classified_at, {", ".join(columns)})
+        VALUES ('s1', $1, 'jev-1.13.0', $2, 5, '{{}}', $3,
+                {", ".join(f"${number}" for number in range(4, 4 + len(columns)))})
+        """,
+        entry_id,
+        questions_fingerprint(),
+        classified_at,
+        *columns.values(),
+    )
+
+
+class TestWorthWriting:
+    """The writer takes the oldest message first.
+
+    The order is the message's moment in the record and not the reading's,
+    because a backfill reads history in whatever order its tasks finish.
+    """
+
+    @pytest.fixture
+    async def out_of_order(self, store: asyncpg.Pool) -> asyncpg.Pool:
+        # Read newest first, which is the order a backfill produces.
+        await said(store, "winter", SAID - timedelta(days=200))
+        await said(store, "spring", SAID - timedelta(days=100))
+        await said(store, "today", SAID)
+        await said(store, "unplaced", None)
+        await read(store, "today", classified_at=SAID + timedelta(seconds=1))
+        await read(store, "unplaced", classified_at=SAID + timedelta(seconds=2))
+        await read(store, "spring", classified_at=SAID + timedelta(seconds=3))
+        await read(store, "winter", classified_at=SAID + timedelta(seconds=4))
+        return store
+
+    async def test_the_oldest_message_is_written_first(self, out_of_order):
+        found = await worth_writing(out_of_order)
+        assert [entry for _, entry in found] == ["winter", "spring", "today", "unplaced"]
+
+    async def test_a_message_that_cleared_no_threshold_is_not_written(self, store):
+        await said(store, "quiet", SAID)
+        await read(store, "quiet", classified_at=SAID, correction=0.1)
+        assert await worth_writing(store) == []
+
+    async def test_a_message_already_written_is_not_written_again(self, out_of_order):
+        await out_of_order.execute(
+            """
+            INSERT INTO memories
+                (statement, kind, score, session_id, entry_id, model, questions_fingerprint)
+            VALUES ('done', 'correction', 0.9, 's1', 'winter', 'jev-1.13.0', $1)
+            """,
+            questions_fingerprint(),
+        )
+        found = await worth_writing(out_of_order)
+        assert "winter" not in [entry for _, entry in found]
+
+
+class TestRetry:
+    def test_a_sentence_is_tried_again_when_the_provider_fails(self):
+        retry = inspect.signature(synthesize).parameters["retry"].default
+        assert retry.attempts > 1
+
+
+class TestAsk:
+    async def test_the_reply_has_room_for_a_long_answer(self):
+        model = FakeModel("[]")
+        await ask(model, Settings(), "anything")
+        assert model.limit >= 2000
+
+    async def test_the_answer_is_asked_for_on_one_line(self):
+        model = replying(("semantic", "The store is Postgres."))
+        await write(
+            "s1", "e1", settings=Settings(), pool=FakeStore(reading(semantic=0.9)), client=model
+        )
+        assert "on one line" in model.asked

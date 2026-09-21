@@ -14,7 +14,7 @@ import uvicorn
 from docket import Docket
 from fastapi import FastAPI, Query, Request
 
-from . import db
+from . import db, ingest
 from . import memories as statements
 from . import synthesize as writer
 from .classify import (
@@ -81,7 +81,7 @@ async def logs(request: Request) -> dict:
     """The OTLP/HTTP endpoint for the logs signal."""
     payload = await request.json()
     arrived = list(walk(payload))
-    stored = await db.store(request.app.state.pool, arrived)
+    stored = await ingest.store(request.app.state.pool, arrived)
     await schedule(request.app.state.docket, worth_reading(stored.prompts))
     return {"partialSuccess": {}, **stored.counted}
 
@@ -203,7 +203,7 @@ async def rebuild(request: Request) -> dict:
     This is what the raw table exists for. The extraction can change and the
     record does not have to be sent again.
     """
-    return await db.rebuild(request.app.state.pool)
+    return await ingest.rebuild(request.app.state.pool)
 
 
 def main() -> None:

@@ -18,11 +18,11 @@ import logging
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import asyncpg
-from docket import CurrentDocket, Depends, Docket, Shared
+from docket import CurrentDocket, Depends, Docket, ExponentialRetry, Shared
 from typesafe_sdk import AsyncTypeSafeClient, Noul
 
 from .db import store_pool
@@ -220,14 +220,26 @@ def questions_fingerprint() -> str:
 KINDS_FINGERPRINT = questions_fingerprint()
 
 # Entries a harness writes for itself rather than from the conversation. Claude
-# Code and pi both record injected skill text, command wrappers, and interrupt
-# markers as though the person had typed them, which is a third of everything
-# stored as a prompt and none of what the person wanted.
-NOT_PLUMBING = """
-    btrim(body) NOT LIKE '<%'
-    AND btrim(body) NOT LIKE '[Request interrupted%'
-    AND btrim(body) NOT LIKE 'Base directory for this skill%'
-"""
+# Code and pi both record injected skill text, command wrappers, interrupt
+# markers, compaction summaries, and hook output as though the person had typed
+# them, which is a third of everything stored as a prompt and none of what the
+# person wanted. A compaction summary is the worst of these to let through: it
+# is a page of the agent's own words about the whole session, and read as the
+# person's it would put a preference on every sentence in it.
+#
+# The list is kept once, here, and the SQL below is built from it, so the
+# scheduler at the door and the queries that read the record cannot disagree
+# about what the person said.
+PLUMBING_PREFIXES = (
+    "<",
+    "[Request interrupted",
+    "Base directory for this skill",
+    "This session is being continued from a previous conversation",
+    "Stop hook feedback:",
+)
+NOT_PLUMBING = " AND ".join(
+    f"btrim(body) NOT LIKE '{prefix.replace("'", "''")}%'" for prefix in PLUMBING_PREFIXES
+)
 
 # The prompt being read, and where it happened. A prompt with no entry id of
 # its own cannot be pointed at again, and a plumbing entry is not the person.
@@ -291,6 +303,17 @@ RECORD = f"""
 """
 
 
+# A provider that is down or rate-limited answers with an error, and without a
+# retry the message is never read: the task is keyed by the entry, so nothing
+# schedules it again until someone re-reads the range by hand. A few attempts
+# spread over a minute cover an outage of the length seen so far. A reply the
+# code cannot use is not raised, so it is not retried; that is a defect to log
+# and read again under a fixed question, not a transient to wait out.
+MODEL_RETRY = ExponentialRetry(
+    attempts=4, minimum_delay=timedelta(seconds=2), maximum_delay=timedelta(seconds=30)
+)
+
+
 @dataclass(frozen=True)
 class Window:
     """One message, the exchanges before it, and where it happened."""
@@ -308,7 +331,7 @@ class Window:
 
 def plumbing(body: str) -> bool:
     """Whether a harness wrote this entry for itself rather than the person."""
-    return body.lstrip().startswith(("<", "[Request interrupted", "Base directory for this skill"))
+    return body.lstrip().startswith(PLUMBING_PREFIXES)
 
 
 def worth_reading(prompts: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
@@ -418,6 +441,7 @@ async def classify(
     pool: asyncpg.Pool = Shared(store_pool),
     client: AsyncTypeSafeClient = Shared(model_client),
     docket: Docket = CurrentDocket(),
+    retry: ExponentialRetry = MODEL_RETRY,
 ) -> None:
     """Read one message and write down what kinds of memory are in it."""
     found = await window(pool, session_id, entry_id, settings.classify_rounds)

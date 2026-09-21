@@ -16,9 +16,9 @@ from typing import Any
 
 import asyncpg
 import httpx
-from docket import Depends, Shared
+from docket import Depends, ExponentialRetry, Shared
 
-from .classify import KIND_COLUMNS, questions_fingerprint
+from .classify import KIND_COLUMNS, MODEL_RETRY, questions_fingerprint
 from .db import store_pool
 from .memories import retire, standing
 from .settings import Settings, get_settings
@@ -83,6 +83,12 @@ RECORD = """
 # The order is oldest message first, so a message that pushes back is offered the
 # statements already written from messages before it. Writing a history from
 # newest to oldest would let a message from last year retire one from today.
+#
+# The moment is when the message was said, which is the record's, and not when
+# it was read, which is the worker's. A backfill reads a year of history in
+# whatever order ten tasks finish, so the reading order says nothing about the
+# message order. A message with no moment in the record goes last, and it is
+# offered nothing to replace either way.
 WORTH_WRITING = f"""
     SELECT session_id, entry_id
     FROM classifications
@@ -94,7 +100,10 @@ WORTH_WRITING = f"""
             AND m.entry_id = classifications.entry_id
             AND m.questions_fingerprint = classifications.questions_fingerprint
       )
-    ORDER BY classified_at ASC
+    ORDER BY (SELECT l.occurred_at FROM logs l
+               WHERE l.session_id = classifications.session_id
+                 AND l.entry_id = classifications.entry_id) ASC NULLS LAST,
+             classified_at ASC
     LIMIT ${len(THRESHOLDS) + 2}
 """
 
@@ -157,10 +166,10 @@ The message itself, which is what you are writing about:
 
 The kinds of memory found in that message: {kinds}
 {extra}{standing}
-Answer with a JSON array and nothing else. Each element has "kind" set to one
-of the kinds above, "statement" set to one sentence, "everywhere" set to true
-when the sentence holds in other projects as well as this one, and "replaces"
-set to the numbers of any statements the new one replaces.
+Answer with a JSON array on one line and nothing else. Each element has "kind"
+set to one of the kinds above, "statement" set to one sentence, "everywhere"
+set to true when the sentence holds in other projects as well as this one, and
+"replaces" set to the numbers of any statements the new one replaces.
 An empty array means nothing here is worth remembering."""
 
 EXTRA = """
@@ -281,7 +290,11 @@ async def ask(client: httpx.AsyncClient, settings: Settings, instructions: str) 
                 {"role": "system", "content": SYSTEM},
                 {"role": "user", "content": instructions},
             ],
-            "max_tokens": 700,
+            # The reply is a JSON array of a few sentences. A pretty-printed one
+            # with a long "replaces" list ran past 700, and a cut-off array
+            # parses as nothing, so the limit has room and the ask is for one
+            # line.
+            "max_tokens": 2000,
             "temperature": 0,
         },
     )
@@ -396,6 +409,7 @@ async def synthesize(
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Shared(store_pool),
     client: httpx.AsyncClient = Shared(completions_client),
+    retry: ExponentialRetry = MODEL_RETRY,
 ) -> None:
     """Turn one classified message into statements, if it is worth any."""
     written = await write(session_id, entry_id, settings=settings, pool=pool, client=client)

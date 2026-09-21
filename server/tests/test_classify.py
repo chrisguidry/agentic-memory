@@ -5,6 +5,7 @@ too short loses the thing a reply replies to, and a question that judges the
 window rather than the message scores whatever was corrected earlier.
 """
 
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -128,6 +129,15 @@ class TestPlumbing:
 
     def test_an_interrupt_marker_is_not_the_person(self):
         assert plumbing("[Request interrupted by user]")
+
+    def test_a_compaction_summary_is_not_the_person(self):
+        assert plumbing(
+            "This session is being continued from a previous conversation that ran out "
+            "of context. The summary is below."
+        )
+
+    def test_feedback_from_a_stop_hook_is_not_the_person(self):
+        assert plumbing("Stop hook feedback:\n[a hook said something]")
 
     def test_what_the_person_typed_is_the_person(self):
         assert not plumbing("why is the dedup key on the repo revision?")
@@ -451,3 +461,13 @@ def test_the_fingerprint_changes_when_a_question_changes(monkeypatch):
         module.KINDS["semantic"].model_copy(update={"instructions": {"question": "else"}}),
     )
     assert module.questions_fingerprint() != before
+
+
+class TestRetry:
+    def test_a_reading_is_tried_again_when_the_provider_fails(self):
+        retry = inspect.signature(classify).parameters["retry"].default
+        assert retry.attempts > 1
+
+    def test_the_tries_stop(self):
+        retry = inspect.signature(classify).parameters["retry"].default
+        assert retry.attempts < 10

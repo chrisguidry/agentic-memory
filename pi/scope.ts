@@ -25,7 +25,7 @@
  * scoped to one repository does not leak into a sibling.
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 
 export type ScopeKind = "repo" | "org" | "forge" | "directory";
@@ -98,9 +98,23 @@ export function isOrg(path: string): boolean {
  * has already asked. Starting there rather than at the working directory is
  * what makes a session in a subdirectory scope to its repository.
  */
+/**
+ * A path with its symlinks followed, or the path as given when it does not
+ * exist. The backfill resolves symlinks before it walks, and the two have to
+ * name the same scope for the same session, or a live record and a swept
+ * record of one session file under different names.
+ */
+function real(path: string): string {
+  try {
+    return realpathSync(resolve(path));
+  } catch {
+    return resolve(path);
+  }
+}
+
 export function scopeOf(cwd: string, home: string, repoRoot?: string): Scope {
-  const boundary = resolve(home);
-  let directory = repoRoot === undefined ? resolve(cwd) : resolve(repoRoot);
+  const boundary = real(home);
+  let directory = repoRoot === undefined ? real(cwd) : real(repoRoot);
 
   const levels: { kind: ScopeKind; name: string }[] = [];
   while (directory !== boundary) {
@@ -125,9 +139,9 @@ export function scopeOf(cwd: string, home: string, repoRoot?: string): Scope {
 
   // Nothing answered yes, so the scope is the top directory under home. A
   // session in the home directory itself has no directory to name.
-  const relativeToHome = relative(boundary, resolve(cwd));
+  const relativeToHome = relative(boundary, real(cwd));
   if (relativeToHome.startsWith("..")) {
-    return { key: basename(resolve(cwd)), kind: "directory" };
+    return { key: basename(real(cwd)), kind: "directory" };
   }
   const top = relativeToHome.split("/").filter(Boolean)[0];
   return { key: top ?? "home", kind: "directory" };

@@ -19,6 +19,7 @@ They are recorded under their own kinds so a reader can tell them apart.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -63,6 +64,7 @@ def read(path: Path, machine: str) -> Iterator[dict[str, Any]]:
                 continue
             session = found
         session.moved_to(entry.get("cwd"))
+        session.depth = _depth(entry)
         yield from _entry(entry, session, index, path.stem)
 
 
@@ -78,10 +80,19 @@ def _session(
         cwd=entry.get("cwd") or cwd,
         machine=machine,
         version=entry.get("version") or version,
-        # A sidechain entry belongs to a subagent, which is one agent away
-        # from the person who started the session.
-        depth=1 if entry.get("isSidechain") else 0,
+        depth=_depth(entry),
     )
+
+
+def _depth(entry: dict[str, Any]) -> int:
+    """How many agents separate this entry from the person.
+
+    A sidechain entry belongs to a subagent, which is one agent away from the
+    person who started the session. The flag is on every entry, and it is read
+    per entry rather than once per session because a subagent's file shares its
+    session id with the session that spawned it.
+    """
+    return 1 if entry.get("isSidechain") else 0
 
 
 def _entries(path: Path) -> Iterator[dict[str, Any]]:
@@ -108,17 +119,31 @@ def _blocks(message: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _joined(blocks: list[dict[str, Any]], of: str = "text") -> str:
-    return "\n".join(
-        str(block.get(of, "")) for block in blocks if block.get("type") == of
-    )
+    return "\n".join(str(block.get(of, "")) for block in blocks if block.get("type") == of)
+
+
+def _results(blocks: list[dict[str, Any]]) -> str:
+    """The text of every tool result in a message.
+
+    A result's text is under `content`, which is a string for most tools and a
+    list of text blocks for the rest. The block's own type name holds nothing.
+    """
+    found = []
+    for block in blocks:
+        if block.get("type") != "tool_result":
+            continue
+        content = block.get("content")
+        if isinstance(content, list):
+            found.append(_joined(content))
+        elif content is not None:
+            found.append(str(content))
+    return "\n".join(found)
 
 
 def _when(entry: dict[str, Any], message: dict[str, Any]) -> float | None:
     """The entry's timestamp in milliseconds, from whichever shape holds it."""
     stamp = entry.get("timestamp")
     if isinstance(stamp, str):
-        from datetime import datetime
-
         try:
             return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp() * 1000
         except ValueError:
@@ -154,7 +179,7 @@ def _entry(
                 entry=uuid,
                 kind="tool_result",
                 actor="agent",
-                body=_joined(blocks, "tool_result"),
+                body=_results(blocks),
                 when_ms=when,
                 extra=branch
                 + [
@@ -166,8 +191,16 @@ def _entry(
                 ],
             )
         else:
+            # A prompt in a subagent's file was written by the agent that
+            # spawned it, not typed by the person. Recording it as the person
+            # would teach a preference the person never stated.
+            actor = "human" if session.depth == 0 else "agent"
             yield session.record(
-                entry=uuid, kind="prompt", actor="human", body=_joined(blocks), when_ms=when,
+                entry=uuid,
+                kind="prompt",
+                actor=actor,
+                body=_joined(blocks),
+                when_ms=when,
                 extra=branch,
             )
 
@@ -193,14 +226,13 @@ def _entry(
                     "gen_ai.usage.cache_read.input_tokens", usage.get("cache_read_input_tokens")
                 ),
                 attribute(
-                    "gen_ai.usage.cache_write.input_tokens", usage.get("cache_creation_input_tokens")
+                    "gen_ai.usage.cache_write.input_tokens",
+                    usage.get("cache_creation_input_tokens"),
                 ),
                 attribute("agentic_memory.content", json.dumps(blocks)),
             ],
         )
-        for index, block in enumerate(
-            found for found in blocks if found.get("type") == "thinking"
-        ):
+        for index, block in enumerate(found for found in blocks if found.get("type") == "thinking"):
             yield session.record(
                 entry=uuid,
                 kind="thinking",
@@ -244,7 +276,11 @@ def _entry(
 
     elif kind_of == "system":
         yield session.record(
-            entry=uuid, kind="system", actor="system", body=json.dumps(message), when_ms=when,
+            entry=uuid,
+            kind="system",
+            actor="system",
+            body=json.dumps(message),
+            when_ms=when,
             extra=branch,
         )
 
