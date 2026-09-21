@@ -197,11 +197,25 @@ CREATE TABLE IF NOT EXISTS classifications (
     -- The message being judged, and the exchanges before it that make the
     -- message readable. The questions inspect the first and use the second.
     state                 jsonb NOT NULL,
-    verdicts              jsonb NOT NULL,
+
+    -- One probability per kind of memory, lifted out of the map the model
+    -- returned so a query does not have to walk one and a threshold per kind
+    -- can use an index. A kind that is added or removed changes these columns,
+    -- which is a migration, and the kinds are a closed set the code defines.
+    semantic              real NOT NULL,
+    procedural            real NOT NULL,
+    prospective           real NOT NULL,
+    preference            real NOT NULL,
+    correction            real NOT NULL,
+    praise                real NOT NULL,
 
     -- The highest probability any kind got, so the queue for the next stage is
-    -- a range scan rather than a walk through every verdict.
-    best                  real NOT NULL,
+    -- a range scan rather than a walk through every verdict. Derived rather
+    -- than written, because it is a fact about the row and not a judgment.
+    best real GENERATED ALWAYS AS (
+        greatest(semantic, procedural, prospective, preference, correction, praise)
+    ) STORED,
+
     classified_at         timestamptz NOT NULL DEFAULT now()
 );
 
@@ -214,6 +228,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS classifications_window
 
 CREATE INDEX IF NOT EXISTS classifications_best
     ON classifications (best DESC, classified_at DESC);
+
+-- A threshold per kind, because a kind like praise fires on far more than it
+-- should and one number for all six cannot separate them.
+CREATE INDEX IF NOT EXISTS classifications_correction
+    ON classifications (correction DESC)
+    WHERE correction >= 0.5;
 
 CREATE INDEX IF NOT EXISTS classifications_scope
     ON classifications (scope_key, classified_at DESC);

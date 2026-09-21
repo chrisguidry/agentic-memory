@@ -7,6 +7,7 @@ It derives nothing itself, and it calls no model.
 
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import UTC, datetime
 
 import asyncpg
 import uvicorn
@@ -14,7 +15,7 @@ from docket import Docket
 from fastapi import FastAPI, Query, Request
 
 from . import db
-from .classify import classify, worth_reading
+from .classify import classify, readable_prompts, task_key, worth_reading
 from .otlp import walk
 from .settings import get_settings
 
@@ -40,20 +41,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="agentic-memory", lifespan=lifespan)
 
 
-async def schedule(docket: Docket, prompts: list[tuple[str, str]]) -> None:
+async def schedule(docket: Docket, prompts: list[tuple[str, str]]) -> int:
     """Hand every prompt that arrived to the classifier.
 
-    The key names the entry, so a record that arrives twice schedules one
-    reading. Scheduling never fails the request: the record is already stored,
-    and a prompt that goes unread can be read again from the raw table.
+    The key names the entry and the question set, so a record that arrives twice
+    schedules one reading and a re-read under new questions is its own work.
+    Scheduling never fails the request: the record is already stored, and a
+    prompt that goes unread can be read again from the raw table.
     """
+    scheduled = 0
     for session_id, entry_id in prompts:
         try:
-            await docket.add(classify, key=f"classify:{session_id}:{entry_id}")(
-                session_id, entry_id
-            )
+            await docket.add(classify, key=task_key(session_id, entry_id))(session_id, entry_id)
+            scheduled += 1
         except Exception:
             log.warning("could not schedule %s %s", session_id, entry_id, exc_info=True)
+    return scheduled
 
 
 @app.get("/health")
@@ -96,6 +99,7 @@ async def records(
 async def classifications(
     request: Request,
     scope_key: str | None = None,
+    session_id: str | None = None,
     above: float = Query(0.0, ge=0.0, le=1.0),
     limit: int = Query(50, ge=1, le=500),
 ) -> list[dict]:
@@ -107,9 +111,37 @@ async def classifications(
     return await db.classified(
         request.app.state.pool,
         scope_key=scope_key,
+        session_id=session_id,
         above=above,
         limit=limit,
     )
+
+
+@app.post("/reread")
+async def reread(
+    request: Request,
+    since: datetime,
+    until: datetime | None = None,
+    harness: str | None = None,
+    limit: int = Query(500, ge=1, le=10000),
+) -> dict:
+    """Read messages that happened in a range, under the current questions.
+
+    This is how the questions get calibrated. Change one, read the last few
+    days again, and compare the answers. The readings taken under the questions
+    before it stay where they are, named by their own fingerprint.
+    """
+    prompts = await readable_prompts(
+        request.app.state.pool,
+        since=since,
+        until=until or datetime.now(UTC),
+        harness=harness,
+        limit=limit,
+    )
+    return {
+        "candidates": len(prompts),
+        "scheduled": await schedule(request.app.state.docket, prompts),
+    }
 
 
 @app.post("/rebuild")

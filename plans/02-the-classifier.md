@@ -139,6 +139,17 @@ money. Every memory kept is a candidate that recall has to rank and
 injection has to weigh. The second pass is cheap as well, so the gate is
 there to keep marginal memories out.
 
+A threshold per kind is necessary, because the kinds do not fire at the
+same rate. Read over three days of one person's history, 353 messages,
+the median is 0.72 for prospective and 0.74 for preference, but 0.15 for
+correction and 0.28 for semantic. At a threshold of 0.5, 299 of the 353
+clear it on some kind, so one number for all six filters almost nothing.
+
+The same measurement says `best` is a poor queue. It is the highest kind
+on a row, and it is prospective or preference in 269 of the 353. A second
+stage told to read whatever scores highest would read those two and
+almost never the rest.
+
 ## What it does not do
 
 - It writes no memory. There is no memory table yet.

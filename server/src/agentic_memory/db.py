@@ -15,6 +15,7 @@ from typing import Any, NamedTuple
 
 import asyncpg
 
+from .classify import KIND_COLUMNS
 from .otlp import raw, resource_row, row, scope_row
 
 log = logging.getLogger("agentic_memory")
@@ -379,22 +380,36 @@ async def classified(
     pool: asyncpg.Pool,
     *,
     scope_key: str | None = None,
+    session_id: str | None = None,
     above: float = 0.0,
+    kind: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """The windows the classifier read, above a probability the caller picks.
+    """The messages the classifier read, above a probability the caller picks.
 
     The threshold arrives with the query rather than sitting in the table,
     because the reading is a probability and the decision about it belongs to
-    whoever is asking.
+    whoever is asking. It can be set per kind, because the kinds do not fire at
+    the same rate.
+
+    The message comes back with the reading, because calibration is reading a
+    page of messages next to what the model made of them.
     """
-    query = """
-        SELECT session_id, entry_id, scope_key, model, rounds, verdicts, best, classified_at
+    if kind is not None and kind not in KIND_COLUMNS:
+        raise ValueError(f"unknown kind {kind!r}")
+
+    measured = kind or "best"
+    query = f"""
+        SELECT session_id, entry_id, scope_key, model, questions_fingerprint,
+               rounds, state->>'message' AS message,
+               {", ".join(KIND_COLUMNS)}, best, classified_at
         FROM classifications
-        WHERE best >= $1 AND ($2::text IS NULL OR scope_key = $2)
-        ORDER BY best DESC, classified_at DESC
-        LIMIT $3
+        WHERE {measured} >= $1
+          AND ($2::text IS NULL OR scope_key = $2)
+          AND ($3::text IS NULL OR session_id = $3)
+        ORDER BY {measured} DESC, classified_at DESC
+        LIMIT $4
     """
     async with pool.acquire() as connection:
-        found = await connection.fetch(query, above, scope_key, limit)
+        found = await connection.fetch(query, above, scope_key, session_id, limit)
     return [dict(record) for record in found]

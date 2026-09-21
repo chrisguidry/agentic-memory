@@ -18,6 +18,7 @@ import logging
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import asyncpg
@@ -172,6 +173,21 @@ RECENT_PROMPTS = f"""
     LIMIT $3
 """
 
+# Messages that arrived in a range, for reading a part of the history again.
+# The range is on when the message happened rather than when it was stored, so
+# a backfill of an old session lands in the range it belongs to.
+READABLE = f"""
+    SELECT session_id, entry_id, body
+    FROM logs
+    WHERE kind = 'prompt'
+      AND occurred_at >= $1 AND occurred_at < $2
+      AND entry_id IS NOT NULL
+      AND ($3::text IS NULL OR harness = $3)
+      AND {NOT_PLUMBING}
+    ORDER BY occurred_at DESC
+    LIMIT $4
+"""
+
 # Everything leading up to the message, and not the message itself. The two are
 # read separately because the questions judge one and only use the other.
 BEFORE = """
@@ -182,14 +198,19 @@ BEFORE = """
     ORDER BY occurred_at
 """
 
+# The kinds in a fixed order, so the columns a reading writes and the questions
+# it asks cannot drift apart.
+KIND_COLUMNS = tuple(KINDS)
+KIND_VALUES = ", ".join(f"${n}" for n in range(8, 8 + len(KIND_COLUMNS)))
+
 # One reading per window per model per question set, so a retry writes nothing,
 # a second model can be added beside the first, and changing a question does not
 # leave the old answers standing as though they were answers to the new one.
-RECORD = """
+RECORD = f"""
     INSERT INTO classifications
         (session_id, entry_id, scope_key, model, questions_fingerprint, rounds,
-         state, verdicts, best)
-    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
+         state, {", ".join(KIND_COLUMNS)})
+    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, {KIND_VALUES})
     ON CONFLICT (session_id, entry_id, model, questions_fingerprint) DO NOTHING
 """
 
@@ -265,6 +286,34 @@ async def window(
     )
 
 
+def task_key(session_id: str, entry_id: str) -> str:
+    """The name of one scheduled reading.
+
+    The question set is part of the name, so reading the same message again
+    under new questions is its own piece of work rather than a message that was
+    already handled.
+    """
+    return f"classify:{session_id}:{entry_id}:{KINDS_FINGERPRINT}"
+
+
+async def readable_prompts(
+    pool: asyncpg.Pool,
+    *,
+    since: datetime,
+    until: datetime,
+    harness: str | None = None,
+    limit: int = 500,
+) -> list[tuple[str, str]]:
+    """The messages worth reading that happened in a range.
+
+    This is how the questions get calibrated. Change one, read the last few days
+    again, and compare the answers, without reading the whole history and
+    without disturbing the readings taken under the questions before it.
+    """
+    found = await pool.fetch(READABLE, since, until, harness, limit)
+    return worth_reading([(row["session_id"], row["entry_id"], row["body"]) for row in found])
+
+
 @asynccontextmanager
 async def store_pool():
     """The store, opened once and shared by every task on a worker."""
@@ -303,8 +352,14 @@ async def classify(
     state = found.state()
     response = await client.system_one(state=state, questions=KINDS)
     verdicts = {kind: answer.noul for kind, answer in response.nouls.items()}
-    if not verdicts:
-        log.warning("no answers for %s %s", session_id, entry_id)
+
+    # A partial answer is a defect rather than data, because a reading missing a
+    # kind cannot be compared with one that has it. The task is idempotent, so a
+    # later pass can read this message again.
+    if set(verdicts) != set(KINDS):
+        log.warning(
+            "%s %s: answered %s of %s kinds", session_id, entry_id, len(verdicts), len(KINDS)
+        )
         return
 
     await pool.execute(
@@ -316,7 +371,6 @@ async def classify(
         KINDS_FINGERPRINT,
         settings.classify_rounds,
         json.dumps(state),
-        json.dumps(verdicts),
-        max(verdicts.values()),
+        *(verdicts[kind] for kind in KIND_COLUMNS),
     )
     log.info("read %s %s: %s", session_id, entry_id, verdicts)

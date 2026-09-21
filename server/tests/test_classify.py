@@ -5,17 +5,19 @@ too short loses the thing a reply replies to, and a question that judges the
 window rather than the message scores whatever was corrected earlier.
 """
 
-import json
 from types import SimpleNamespace
 
 import pytest
 
 from agentic_memory.classify import (
+    KIND_COLUMNS,
     KINDS,
     KINDS_FINGERPRINT,
     classify,
     plumbing,
+    readable_prompts,
     spoken,
+    task_key,
     window,
     worth_reading,
 )
@@ -77,6 +79,15 @@ def one_round(message: str = "we use uv here") -> FakeStore:
     )
 
 
+def answering(**overrides) -> FakeModel:
+    """A model that answers every kind, with the named ones overridden.
+
+    The task refuses a partial answer, so a test that wants a reading has to
+    supply one of these rather than a couple of kinds.
+    """
+    return FakeModel(**{**dict.fromkeys(KINDS, 0.05), **overrides})
+
+
 class TestPlumbing:
     def test_a_command_wrapper_is_not_the_person(self):
         assert plumbing("<command-name>/clear</command-name>")
@@ -126,6 +137,52 @@ class TestWorthReading:
             ("s1", "e2", "why is the dedup key on the repo revision?"),
         ]
         assert worth_reading(written) == [("s1", "e2")]
+
+
+class TestTaskKey:
+    def test_the_question_set_is_part_of_the_name(self):
+        # Reading the same message again under new questions is its own piece of
+        # work, not a message that was already handled.
+        assert KINDS_FINGERPRINT in task_key("s1", "e1")
+
+    def test_two_messages_get_two_names(self):
+        assert task_key("s1", "e1") != task_key("s1", "e2")
+
+    def test_two_sessions_get_two_names(self):
+        assert task_key("s1", "e1") != task_key("s2", "e1")
+
+
+class ReadingStore:
+    """A store that answers the range query with rows it was handed."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.wanted: tuple | None = None
+
+    async def fetch(self, query, *values):
+        self.wanted = values
+        return self.rows
+
+
+class TestReadablePrompts:
+    async def test_only_the_persons_own_words_come_back(self):
+        store = ReadingStore(
+            [
+                {"session_id": "s1", "entry_id": "e1", "body": "why is the key on it?"},
+                {
+                    "session_id": "s1",
+                    "entry_id": "e2",
+                    "body": "<command-name>/clear</command-name>",
+                },
+            ]
+        )
+        found = await readable_prompts(store, since=1, until=2, limit=10)
+        assert found == [("s1", "e1")]
+
+    async def test_the_pair_comes_back_without_the_body(self):
+        store = ReadingStore([{"session_id": "s1", "entry_id": "e1", "body": "hello"}])
+        found = await readable_prompts(store, since=1, until=2, limit=10)
+        assert found == [("s1", "e1")]
 
 
 class TestWindow:
@@ -198,11 +255,26 @@ class TestClassify:
             "e9",
             settings=Settings(),
             pool=store,
-            client=FakeModel(semantic=0.91, procedural=0.12),
+            client=answering(semantic=0.91, procedural=0.12),
         )
         _, values = store.written
         assert values[:2] == ("s1", "e9")
         assert values[2] == "github.com/liken-sh"
+
+    async def test_the_scores_land_in_the_column_for_their_kind(self):
+        # The columns and the questions come from one tuple, so a kind cannot be
+        # asked about and then written under another kind's name.
+        store = one_round()
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(),
+            pool=store,
+            client=answering(**{kind: 0.5 for kind in KINDS}),
+        )
+        _, values = store.written
+        written = dict(zip(KIND_COLUMNS, values[7:], strict=True))
+        assert written == dict.fromkeys(KINDS, 0.5)
 
     async def test_the_probabilities_are_kept_rather_than_a_decision_about_them(self):
         store = one_round()
@@ -211,24 +283,26 @@ class TestClassify:
             "e9",
             settings=Settings(),
             pool=store,
-            client=FakeModel(semantic=0.91, procedural=0.12),
+            client=answering(semantic=0.91, procedural=0.12),
         )
         _, values = store.written
-        assert json.loads(values[7]) == {"semantic": 0.91, "procedural": 0.12}
+        written = dict(zip(KIND_COLUMNS, values[7:], strict=True))
+        assert written["semantic"] == 0.91
+        assert written["procedural"] == 0.12
 
-    async def test_the_highest_probability_is_written_beside_them(self):
-        # The next stage reads this column, so it is a range scan rather than a
-        # walk through every verdict.
+    async def test_no_highest_score_is_written_because_the_table_derives_it(self):
+        # best is greatest(...) in the schema, so the task does not send one and
+        # cannot disagree with the scores beside it.
         store = one_round()
         await classify(
             "s1",
             "e9",
             settings=Settings(),
             pool=store,
-            client=FakeModel(semantic=0.91, procedural=0.12),
+            client=answering(semantic=0.91, procedural=0.12),
         )
         _, values = store.written
-        assert values[8] == 0.91
+        assert len(values) == 7 + len(KIND_COLUMNS)
 
     async def test_the_reading_names_the_questions_it_was_asked(self):
         # The model name cannot do this job, because the questions move without
@@ -240,7 +314,7 @@ class TestClassify:
             "e9",
             settings=Settings(),
             pool=store,
-            client=FakeModel(semantic=0.91),
+            client=answering(semantic=0.91),
         )
         _, values = store.written
         assert values[4] == KINDS_FINGERPRINT
@@ -267,9 +341,17 @@ class TestClassify:
         await classify("s1", "e9", settings=Settings(), pool=store, client=model)
         assert model.state is None
 
-    async def test_nothing_is_written_when_the_model_answers_nothing(self):
+    async def test_a_partial_answer_is_not_written(self):
+        # A reading missing a kind cannot be compared with one that has it, and
+        # the task is idempotent, so a later pass can read the message again.
         store = one_round()
-        await classify("s1", "e9", settings=Settings(), pool=store, client=FakeModel())
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(),
+            pool=store,
+            client=FakeModel(semantic=0.91),
+        )
         assert store.written is None
 
 
