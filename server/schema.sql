@@ -243,12 +243,21 @@ CREATE INDEX IF NOT EXISTS classifications_scope
 --
 -- A null scope means the statement holds everywhere. Retrieval walks up the
 -- scope path from where the session is, so a null is reachable from any of it.
+--
+-- A statement is retired rather than deleted or edited. The statement that
+-- replaced it is named on the row, so a question about the past still has an
+-- answer, and the chain of replacements is the reason the service believes what
+-- it believes.
+--
+-- `superseded_at` is a recorded time and not the end of the interval the
+-- statement was true in. The service learns that something stopped being true
+-- at a different moment from when it stopped.
 CREATE TABLE IF NOT EXISTS memories (
     id                    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     statement             text NOT NULL,
 
     -- Which question produced it, and how sure that reading was. The score is
-    -- what the ranking reads.
+    -- shown beside a statement and is not what the ranking reads.
     kind                  text NOT NULL,
     score                 real NOT NULL,
     scope_key             text,
@@ -259,16 +268,44 @@ CREATE TABLE IF NOT EXISTS memories (
     entry_id              text NOT NULL,
     model                 text NOT NULL,
     questions_fingerprint text NOT NULL,
-    created_at            timestamptz NOT NULL DEFAULT now()
+    created_at            timestamptz NOT NULL DEFAULT now(),
+
+    -- When the message that produced the statement was said. The ranking ages a
+    -- statement by this and not by `created_at`, because a backfill writes a
+    -- year of statements in a minute and the recorded time then says nothing
+    -- about relevance. Null when the record of the message cannot be found, and
+    -- a statement whose time is unknown is never retired by a message.
+    said_at               timestamptz,
+
+    superseded_by         bigint REFERENCES memories(id),
+    superseded_at         timestamptz
 );
+
+--
+-- Columns added after the tables above already existed.
+--
+-- This file is applied when the service starts, against a database that either
+-- has the tables or does not, so every statement in it is written to be applied
+-- either way. A fresh database takes the columns from the CREATE above and the
+-- ALTER below does nothing. These come before the indexes, because an index on
+-- a column that an existing database does not have yet fails.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_by bigint REFERENCES memories(id);
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_at timestamptz;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS said_at timestamptz;
 
 -- One statement per message per kind per question set, so a retry writes
 -- nothing and one message can carry a fact and a rule at once.
 CREATE UNIQUE INDEX IF NOT EXISTS memories_source
     ON memories (session_id, entry_id, kind, questions_fingerprint);
 
-CREATE INDEX IF NOT EXISTS memories_scope
-    ON memories (scope_key, score DESC);
+-- A retired statement is absent from every read, so the read index holds only
+-- the live ones. The scope comes first because every read is narrowed by it,
+-- and the kind follows because the ranking weighs kinds differently.
+CREATE INDEX IF NOT EXISTS memories_live
+    ON memories (scope_key, kind, said_at DESC)
+    WHERE superseded_by IS NULL;
 
-CREATE INDEX IF NOT EXISTS memories_recent
-    ON memories (created_at DESC);
+-- The ranking is computed from the kind and the age rather than read from a
+-- column, so the indexes the old ordering needed are gone.
+DROP INDEX IF EXISTS memories_scope;
+DROP INDEX IF EXISTS memories_recent;

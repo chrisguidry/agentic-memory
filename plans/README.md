@@ -55,7 +55,11 @@ a step six months out would be a guess with a number on it.
 
 ## Completed
 
-Nothing is built.
+* [03, The memories](completed/03-the-memories.md). Closed 2026-09-21.
+
+01 and 02 describe the record and the classifier, and both are built.
+They were built before this section was kept, so neither was moved here
+and neither records what its drill measured.
 
 ## Open problems
 

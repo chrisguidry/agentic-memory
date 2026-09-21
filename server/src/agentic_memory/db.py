@@ -1,6 +1,6 @@
 """Writing records to Postgres.
 
-Three tables are written together. `resources` and `scopes` hold the two maps
+Four tables are written together. `resources` and `scopes` hold the two maps
 every signal has, `otel_exports` holds what arrived, and `logs` holds the
 unpacked form.
 
@@ -13,6 +13,7 @@ import json
 import logging
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import asyncpg
@@ -465,30 +466,14 @@ async def classified(
     return [dict(record) for record in found]
 
 
-async def memories(
-    pool: asyncpg.Pool,
-    *,
-    scope_key: str | None = None,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
-    """What is worth remembering, for a place.
+# The schema is one file, and every statement in it can be applied to a
+# database that has the tables or to one that does not. It is applied when the
+# service starts, so the file and the database cannot disagree. A column added
+# to the file and migrated by hand somewhere else is how they disagree.
+SCHEMA = Path(__file__).resolve().parents[2] / "schema.sql"
 
-    A statement is reachable from a scope when it is scoped to that scope, to
-    any scope above it, or to none. The scope is a path, so a statement about a
-    repository is reachable from a directory inside it without anyone having
-    declared that.
-    """
-    query = """
-        SELECT id, statement, kind, score, scope_key, session_id, entry_id,
-               model, created_at
-        FROM memories
-        WHERE $1::text IS NULL
-           OR scope_key IS NULL
-           OR scope_key = $1
-           OR $1 LIKE scope_key || '%'
-        ORDER BY score DESC, created_at DESC
-        LIMIT $2
-    """
+
+async def apply_schema(pool: asyncpg.Pool) -> None:
+    """Bring the database up to the schema in the file."""
     async with pool.acquire() as connection:
-        found = await connection.fetch(query, scope_key, limit)
-    return [dict(record) for record in found]
+        await connection.execute(SCHEMA.read_text())

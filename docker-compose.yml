@@ -53,6 +53,9 @@ services:
     volumes:
       # Read-only, so the container never writes into the working tree.
       - ./server/src:/app/src:ro
+      # The service applies this when it starts, so the file and the database
+      # cannot disagree about what the tables are.
+      - ./server/schema.sql:/app/schema.sql:ro
     command:
       - uvicorn
       - agentic_memory.app:app

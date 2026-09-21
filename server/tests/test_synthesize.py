@@ -6,6 +6,7 @@ produces something that parses and is wrong.
 """
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,10 @@ from agentic_memory.synthesize import (
     write,
     writing_from,
 )
+
+# When the message was said. The ranking ages a statement by this rather than
+# by when the statement was written, so the writer carries it onto the row.
+SAID = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
 
 
 def reading(**overrides) -> dict:
@@ -34,6 +39,7 @@ def reading(**overrides) -> dict:
         "message": "we use uv, not pip",
         "beyond_this_project": 0.1,
         "forbids": 0.1,
+        "said_at": SAID,
     }
     found.update(scores)
     found.update(overrides)
@@ -41,20 +47,29 @@ def reading(**overrides) -> dict:
 
 
 class FakeStore:
-    """A store that answers the reading and records the statements written."""
+    """A store that answers the reading, the held statements, and the writes."""
 
-    def __init__(self, found):
+    def __init__(self, found, standing: list[dict] | None = None):
         self.found = found
+        self.standing = standing or []
         self.written: list[tuple] = []
+        self.retired: list[tuple] = []
+        self.asked_standing: tuple | None = None
 
     async def fetchrow(self, query, *values):
         return self.found
 
     async def fetch(self, query, *values):
-        return []
+        self.asked_standing = values
+        return self.standing
+
+    async def fetchval(self, query, *values):
+        self.written.append(values)
+        return len(self.written)
 
     async def execute(self, query, *values):
-        self.written.append(values)
+        self.retired.append(values)
+        return "UPDATE 1"
 
 
 class FakeModel:
@@ -72,8 +87,31 @@ class FakeModel:
         )
 
 
-def replying(*statements) -> FakeModel:
-    return FakeModel(json.dumps([{"kind": k, "statement": s} for k, s in statements]))
+def replying(*statements, replaces=None) -> FakeModel:
+    return FakeModel(
+        json.dumps(
+            [
+                {"kind": kind, "statement": statement, "replaces": replaces}
+                for kind, statement in statements
+            ]
+        )
+    )
+
+
+def held(statement_id: int, kind: str = "preference", statement: str = "Postgres is the store."):
+    """One statement the place already holds, as the store hands it back."""
+    return {
+        "id": statement_id,
+        "kind": kind,
+        "statement": statement,
+        "score": 0.9,
+        "scope_key": "github.com/liken-sh",
+        "session_id": "s0",
+        "entry_id": "e0",
+        "model": "jev-1.13.0",
+        "said_at": SAID,
+        "created_at": None,
+    }
 
 
 class TestParse:
@@ -139,6 +177,13 @@ class TestWrite:
         assert written[1] == "semantic"
         assert written[2] == 0.95
 
+    async def test_the_statement_carries_the_moment_the_message_was_said(self):
+        store = FakeStore(reading(semantic=0.95))
+        model = replying(("semantic", "The repo uses uv."))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        (written,) = store.written
+        assert written[8] == SAID
+
     async def test_a_statement_that_holds_everywhere_is_scoped_to_nothing(self):
         store = FakeStore(reading(semantic=0.95, beyond_this_project=0.9))
         model = replying(("semantic", "Never use em dashes."))
@@ -171,6 +216,85 @@ class TestWrite:
         model = replying(("semantic", "x"))
         await write("s1", "e1", settings=Settings(), pool=store, client=model)
         assert store.written == []
+
+
+class TestReplacing:
+    async def test_a_message_that_does_not_push_back_is_offered_nothing(self):
+        store = FakeStore(reading(semantic=0.95), standing=[held(7)])
+        model = replying(("semantic", "x"))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert store.asked_standing is None
+        assert store.retired == []
+
+    async def test_a_message_that_corrects_something_older_opens_the_gate(self):
+        # The gate is separate from the kinds, so a message can replace
+        # something without the correction kind firing.
+        store = FakeStore(reading(semantic=0.95, corrects_earlier=0.9), standing=[held(7)])
+        model = replying(("semantic", "x"))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert store.asked_standing is not None
+
+    async def test_the_held_statements_are_asked_for_at_the_place_and_kind(self):
+        store = FakeStore(reading(correction=0.95), standing=[held(7)])
+        model = replying(("correction", "x"))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        scope_key, kinds, said_before, _ = store.asked_standing
+        assert scope_key == "github.com/liken-sh"
+        assert kinds == ["correction"]
+        assert said_before == SAID
+
+    async def test_the_held_statements_are_listed_for_the_writer(self):
+        store = FakeStore(reading(correction=0.95), standing=[held(7)])
+        model = replying(("correction", "x"))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert "[1] (preference) Postgres is the store." in model.asked
+
+    async def test_a_message_with_nothing_held_asks_without_a_list(self):
+        store = FakeStore(reading(correction=0.95))
+        model = replying(("correction", "x"))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert "already holds" not in model.asked
+
+    async def test_a_replacement_ends_the_statement_it_names(self):
+        store = FakeStore(reading(correction=0.95), standing=[held(7)])
+        model = replying(("correction", "The store is Redis."), replaces=[1])
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        (retired,) = store.retired
+        assert retired[0] == 7
+        assert retired[1] == 1
+
+    async def test_a_number_that_was_never_offered_ends_nothing(self):
+        store = FakeStore(reading(correction=0.95), standing=[held(7)])
+        model = replying(("correction", "x"), replaces=[99])
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert store.retired == []
+
+    async def test_a_number_written_as_text_is_read(self):
+        # The model answers with numbers and with the numbers as text, and both
+        # mean the same thing.
+        store = FakeStore(reading(correction=0.95), standing=[held(7)])
+        model = replying(("correction", "x"), replaces=["1"])
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        (retired,) = store.retired
+        assert retired[0] == 7
+
+    async def test_an_answer_that_is_not_a_number_ends_nothing(self):
+        store = FakeStore(reading(correction=0.95), standing=[held(7)])
+        model = replying(("correction", "x"), replaces=["the first one"])
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert store.retired == []
+
+    async def test_a_replacement_that_was_not_a_list_ends_nothing(self):
+        store = FakeStore(reading(correction=0.95), standing=[held(7)])
+        model = replying(("correction", "x"), replaces="1")
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert store.retired == []
+
+    async def test_a_statement_that_replaces_nothing_ends_nothing(self):
+        store = FakeStore(reading(correction=0.95), standing=[held(7)])
+        model = replying(("correction", "x"))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        assert store.retired == []
 
 
 class TestSynthesize:

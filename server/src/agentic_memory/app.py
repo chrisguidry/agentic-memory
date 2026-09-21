@@ -14,6 +14,7 @@ from docket import Docket
 from fastapi import FastAPI, Query, Request
 
 from . import db
+from . import memories as statements
 from . import synthesize as writer
 from .classify import (
     KIND_COLUMNS,
@@ -35,6 +36,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     async with AsyncExitStack() as stack:
         app.state.pool = await stack.enter_async_context(store_pool())
+        # The schema is applied here and not by the worker, so two processes
+        # starting together cannot run the same data definition at once.
+        await db.apply_schema(app.state.pool)
         # The service schedules work and never runs it, so a model call cannot
         # hold up an ingest. The worker holds the same docket and reads there.
         app.state.docket = await stack.enter_async_context(
@@ -181,9 +185,11 @@ async def memories(
 
     Retrieval walks up the scope path, so a statement about a repository is
     reachable from any directory in it. A statement scoped to nothing is
-    reachable from everywhere.
+    reachable from everywhere. What comes back is ordered by the ranking, which
+    weighs the kind and the age of each statement, and a statement a newer one
+    replaced is not in it.
     """
-    return await db.memories(request.app.state.pool, scope_key=scope_key, limit=limit)
+    return await statements.memories(request.app.state.pool, scope_key=scope_key, limit=limit)
 
 
 @app.post("/rebuild")

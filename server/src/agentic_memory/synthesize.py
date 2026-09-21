@@ -12,6 +12,7 @@ the old statements instead of over them.
 import json
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 import asyncpg
 import httpx
@@ -19,6 +20,7 @@ from docket import Depends, Shared
 
 from .classify import KIND_COLUMNS, questions_fingerprint
 from .db import store_pool
+from .memories import retire, standing
 from .settings import Settings, get_settings
 
 log = logging.getLogger("agentic_memory.synthesize")
@@ -41,28 +43,45 @@ THRESHOLDS: dict[str, float] = {
     "praise": 0.80,
 }
 
+# How sure the reading has to be that a message pushes back on something before
+# the statements already held about the place are put in front of the writer.
+# Measured over 376 readings, this question and the correction kind together
+# qualify 35 of them, which is about one message in eleven. Everything else
+# writes without any candidates, so the comparison against the table costs
+# nothing on the messages that cannot replace anything.
+CORRECTS_EARLIER = 0.70
+
 # The reading for one message, with the state it judged and every score.
 READING = f"""
     SELECT session_id, entry_id, scope_key, model, questions_fingerprint,
            state ->> 'before' AS before, state ->> 'message' AS message,
+           (SELECT l.occurred_at FROM logs l
+             WHERE l.session_id = classifications.session_id
+               AND l.entry_id = classifications.entry_id) AS said_at,
            {", ".join(sorted(set(KIND_COLUMNS)))}
     FROM classifications
     WHERE session_id = $1 AND entry_id = $2 AND questions_fingerprint = $3
 """
 
 # One statement per message per kind per question set, so a retry writes
-# nothing and one message can carry a fact and a rule at once.
+# nothing and one message can carry a fact and a rule at once. The new id comes
+# back because a statement that replaces another one names it.
 RECORD = """
     INSERT INTO memories
         (statement, kind, score, scope_key, session_id, entry_id, model,
-         questions_fingerprint)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         questions_fingerprint, said_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     ON CONFLICT (session_id, entry_id, kind, questions_fingerprint) DO NOTHING
+    RETURNING id
 """
 
 # The readings that have cleared a threshold and have no statements yet. The
 # thresholds go in as values rather than as text, so the query is one statement
 # that does not change when the numbers do.
+#
+# The order is oldest message first, so a message that pushes back is offered the
+# statements already written from messages before it. Writing a history from
+# newest to oldest would let a message from last year retire one from today.
 WORTH_WRITING = f"""
     SELECT session_id, entry_id
     FROM classifications
@@ -74,7 +93,7 @@ WORTH_WRITING = f"""
             AND m.entry_id = classifications.entry_id
             AND m.questions_fingerprint = classifications.questions_fingerprint
       )
-    ORDER BY classified_at DESC
+    ORDER BY classified_at ASC
     LIMIT ${len(THRESHOLDS) + 2}
 """
 
@@ -131,14 +150,27 @@ The message itself, which is what you are writing about:
 </message>
 
 The kinds of memory found in that message: {kinds}
-{extra}
+{extra}{standing}
 Answer with a JSON array and nothing else. Each element has "kind" set to one
-of the kinds above and "statement" set to one sentence. An empty array means
-nothing here is worth remembering."""
+of the kinds above, "statement" set to one sentence, and "replaces" set to the
+numbers of any statements the new one replaces.
+An empty array means nothing here is worth remembering."""
 
 EXTRA = """
 Two more things were found, and they change how the sentences are written:
 {notes}
+"""
+
+STANDING = """
+The statements this place already holds, by number:
+
+{standing}
+
+If the message replaces any of them, name those numbers in "replaces" on the
+statement doing the replacing. A statement replaces another when the two cannot
+both be true, or when the new one settles a question the old one left open.
+Adding a fact, an opinion, or a detail to one of them replaces nothing, and
+naming a number ends the statement for good.
 """
 
 
@@ -157,6 +189,60 @@ def writing_from(kind: str) -> bool:
     ignored.
     """
     return kind in THRESHOLDS
+
+
+def pushes_back(reading: Any) -> bool:
+    """Whether a message is worth offering the held statements to.
+
+    Only a message that corrects something or pushes back on something older
+    can replace a statement. Asking every message would put a list of the
+    place's memories in front of the writer for no reason, and a writer shown
+    the list will find something in it to replace.
+    """
+    return (
+        reading["correction"] >= THRESHOLDS["correction"]
+        or reading["corrects_earlier"] >= CORRECTS_EARLIER
+    )
+
+
+def offered_numbers(
+    sentence: dict[str, Any],
+    candidates: dict[int, dict[str, Any]],
+) -> list[int]:
+    """The statements a sentence says it replaces, by their ids.
+
+    A model answers with numbers and with the numbers as text, so both are read.
+    A number that was never offered is dropped, because the model can only end a
+    statement that was put in front of it, and dropping it is logged so a
+    replacement that did not happen is never silent.
+    """
+    named = sentence.get("replaces")
+    if not isinstance(named, list):
+        return []
+    numbers = []
+    for entry in named:
+        try:
+            number = int(entry)
+        except TypeError, ValueError:
+            log.warning("the writer named %r as a replacement, which is not a number", entry)
+            continue
+        if number not in candidates:
+            log.warning("the writer named %s as a replacement, which was not offered", number)
+            continue
+        numbers.append(candidates[number]["id"])
+    return numbers
+
+
+def candidates_block(
+    candidates: dict[int, dict[str, Any]],
+) -> str:
+    """The held statements as the writer reads them, or nothing when there are none."""
+    if not candidates:
+        return ""
+    listed = "\n".join(
+        f"[{number}] ({row['kind']}) {row['statement']}" for number, row in candidates.items()
+    )
+    return STANDING.format(standing=listed)
 
 
 def parse(reply: str) -> list[dict]:
@@ -228,12 +314,25 @@ async def write(
     if found["forbids"] >= 0.7:
         notes.append("It rules something out, so write it as a thing not to do.")
 
+    # The statements this place holds, by the number the writer will name them
+    # by. Nothing is offered unless the message pushes back on something.
+    candidates: dict[int, dict[str, Any]] = {}
+    if pushes_back(found):
+        held = await standing(
+            pool,
+            scope_key=found["scope_key"],
+            kinds=firing,
+            said_before=found["said_at"],
+        )
+        candidates = dict(enumerate(held, start=1))
+
     instructions = INSTRUCTIONS.format(
         scope=found["scope_key"] or "unknown",
         before=found["before"] or "(nothing came before it)",
         message=found["message"] or "",
         kinds=", ".join(sorted(firing)),
         extra=EXTRA.format(notes="\n".join(f"- {note}" for note in notes)) if notes else "",
+        standing=candidates_block(candidates),
     )
 
     sentences = parse(await ask(client, settings, instructions))
@@ -250,7 +349,7 @@ async def write(
         statement = (sentence.get("statement") or "").strip()
         if not writing_from(kind) or kind not in firing or not statement:
             continue
-        await pool.execute(
+        new_id = await pool.fetchval(
             RECORD,
             statement,
             kind,
@@ -260,7 +359,14 @@ async def write(
             entry_id,
             found["model"],
             found["questions_fingerprint"],
+            found["said_at"],
         )
+        if new_id is None:
+            continue
+        replaced = offered_numbers(sentence, candidates)
+        if replaced:
+            ended = await retire(pool, replaced=replaced, replacement=new_id)
+            log.info("ended %s statements for %s %s: %s", len(ended), session_id, entry_id, ended)
         written.append(statement)
 
     return written

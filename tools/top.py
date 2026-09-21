@@ -73,17 +73,20 @@ def fetch(endpoint: str, path: str, **params) -> list[dict]:
 def memories_panel(rows: list[dict], scope: str | None) -> Panel:
     """What is worth remembering, ranked the way a turn would read it.
 
-    One statement per row, with its kind and where it applies on the line
-    above it. The statement wraps, so it reads as a sentence rather than as a
-    fragment, and it is cut at two lines so one long statement cannot push the
-    panel below it off the screen. The statement in full is a request away.
+    One statement per row, with its kind, where it applies, and how long ago it
+    was written on the line above it. The number on the left is the rank the
+    order was computed from, which weighs the kind against the age, so it is not
+    the classifier's confidence. The statement wraps, so it reads as a sentence
+    rather than as a fragment, and it is cut at two lines so one long statement
+    cannot push the panel below it off the screen.
     """
     if not rows:
         body = Text("nothing yet. say something worth remembering.", style="dim")
     else:
         table = Table(box=None, pad_edge=False, expand=True, show_header=False, padding=(0, 1))
-        table.add_column("", width=4, justify="right", style="dim")
+        table.add_column("", width=5, justify="right", style="dim")
         table.add_column("statement", overflow="fold", ratio=1)
+        now = datetime.now(UTC)
         for row in rows:
             colour = KIND_STYLE.get(row["kind"], "white")
             where = row["scope_key"] or "everywhere"
@@ -92,9 +95,10 @@ def memories_panel(rows: list[dict], scope: str | None) -> Panel:
             # list of everything the turn was handed.
             inherited = scope is not None and where not in ("everywhere", scope)
             table.add_row(
-                f"{row['score']:.2f}",
+                f"{row['rank']:.2f}",
                 Text(row["kind"], style=colour)
                 + Text(f"  {where}{' \u2191' if inherited else ''}", style="dim")
+                + Text(f"  {ago(row['created_at'], now)}", style="dim")
                 + Text("\n")
                 + Text(two_lines(row["statement"])),
             )
@@ -109,12 +113,11 @@ def memories_panel(rows: list[dict], scope: str | None) -> Panel:
     )
 
 
-def ago(classified_at: str | None, now: datetime) -> str:
-    """How long ago a reading was taken, in as few characters as it takes."""
-    if not classified_at:
+def ago(when: str | None, now: datetime) -> str:
+    """How long ago a moment was, in as few characters as it takes."""
+    if not when:
         return ""
-    moment = datetime.fromisoformat(classified_at)
-    seconds = int((now - moment).total_seconds())
+    seconds = int((now - datetime.fromisoformat(when)).total_seconds())
     if seconds < 60:
         return f"{seconds}s"
     if seconds < 3600:
@@ -168,7 +171,7 @@ def frame(args, state: dict) -> Group:
         memories_panel(state.get("memories", []), args.scope),
         readings_panel(state.get("readings", [])[: args.read]),
         Text(
-            f"  {state.get('written', 0)} statements written · "
+            f"  {state.get('shown', 0)} statements shown · "
             f"{state.get('read', 0)} messages read · polling {args.endpoint}",
             style="dim",
         ),
@@ -181,7 +184,7 @@ def poll(args, state: dict) -> None:
         state["memories"] = fetch(args.endpoint, "/memories", scope_key=args.scope, limit=args.limit)
         state["readings"] = fetch(args.endpoint, "/classifications", above=0.0, limit=args.read)
         state["read"] = len(state["readings"])
-        state["written"] = len(state["memories"])
+        state["shown"] = len(state["memories"])
         state["error"] = None
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as problem:
         state["error"] = f"cannot reach the service at {args.endpoint}: {problem}"
