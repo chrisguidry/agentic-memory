@@ -247,7 +247,7 @@ async def _write_logs(
     from the export rather than taken from now, for the same reason: a rebuild
     reads old records and must not change when they arrived.
 
-    A prompt is the only record worth reading again, and only one carrying an
+    A prompt is the only record worth reading again, and only one with an
     entry id of its own can be pointed at, so those come back named.
     """
     values = []

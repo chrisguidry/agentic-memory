@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentic_memory.classify import KINDS, classify, plumbing, spoken, window
+from agentic_memory.classify import KINDS, KINDS_FINGERPRINT, classify, plumbing, spoken, window
 from agentic_memory.settings import Settings
 
 
@@ -160,7 +160,7 @@ class TestClassify:
             client=FakeModel(semantic=0.91, procedural=0.12),
         )
         _, values = store.written
-        assert json.loads(values[6]) == {"semantic": 0.91, "procedural": 0.12}
+        assert json.loads(values[7]) == {"semantic": 0.91, "procedural": 0.12}
 
     async def test_the_highest_probability_is_written_beside_them(self):
         # The next stage reads this column, so it is a range scan rather than a
@@ -174,13 +174,38 @@ class TestClassify:
             client=FakeModel(semantic=0.91, procedural=0.12),
         )
         _, values = store.written
-        assert values[7] == 0.91
+        assert values[8] == 0.91
+
+    async def test_the_reading_names_the_questions_it_was_asked(self):
+        # The model name cannot do this job, because the questions move without
+        # the model moving, and an answer to the old question is not an answer
+        # to the new one.
+        store = one_round()
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(),
+            pool=store,
+            client=FakeModel(semantic=0.91),
+        )
+        _, values = store.written
+        assert values[4] == KINDS_FINGERPRINT
 
     async def test_the_model_is_asked_about_every_kind(self):
         store = one_round()
         model = FakeModel(semantic=0.91)
         await classify("s1", "e9", settings=Settings(), pool=store, client=model)
         assert model.questions == KINDS
+
+    async def test_the_kinds_are_the_six_the_record_can_hold(self):
+        assert set(KINDS) == {
+            "semantic",
+            "procedural",
+            "prospective",
+            "preference",
+            "correction",
+            "praise",
+        }
 
     async def test_a_window_with_nothing_in_it_is_never_sent_to_a_model(self):
         store = FakeStore(target=None, recent=[], span=[])
@@ -194,8 +219,22 @@ class TestClassify:
         assert store.written is None
 
 
+def test_the_fingerprint_changes_when_a_question_changes(monkeypatch):
+    # The whole point of the fingerprint is that a reading under one question
+    # set is not mistaken for a reading under another.
+    from agentic_memory import classify as module
+
+    before = module.questions_fingerprint()
+    monkeypatch.setitem(
+        module.KINDS,
+        "semantic",
+        module.KINDS["semantic"].model_copy(update={"instructions": "something else"}),
+    )
+    assert module.questions_fingerprint() != before
+
+
 @pytest.mark.parametrize(
-    "kind", ["semantic", "procedural", "prospective", "preference", "correction"]
+    "kind", ["semantic", "procedural", "prospective", "preference", "correction", "praise"]
 )
 def test_every_kind_asks_one_question(kind):
     question = KINDS[kind]

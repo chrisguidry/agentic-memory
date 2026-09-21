@@ -3,15 +3,16 @@
 Nothing here writes a memory. The task reads a window, asks a System One model
 one yes/no question per kind of memory, and writes down the probabilities.
 
-The probabilities are kept rather than a decision about them, so the threshold
-belongs to whatever reads this table. Moving it costs a query instead of
-reading every window again.
+The reading stores a probability, not a decision about it, so the threshold
+belongs to whatever reads this table. Moving the threshold costs a query rather
+than another pass over the record.
 
-The questions are independent of each other by construction, so the answer to
-one is not context for another and a kind can be added or removed without
+The provider documents that the answers are independent, so one question's
+answer is not context for another's and a kind can be added or removed without
 changing the rest.
 """
 
+import hashlib
 import json
 import logging
 from collections.abc import Sequence
@@ -27,10 +28,15 @@ from .settings import Settings, get_settings
 
 log = logging.getLogger("agentic_memory.classify")
 
-# One question per kind of memory the record can hold. Each asks about a single
-# proposition, because the answer is the probability of that proposition and
-# nothing else. A question about degree would come back as the probability of
-# "yes" and would not measure the degree.
+# One question per kind of memory the record can hold. Each one asks about a
+# single proposition, because the answer is the probability of that proposition
+# and nothing else. A question about degree would come back as the probability
+# of "yes" and would not measure the degree.
+#
+# The questions name the speakers rather than the person, because both sides
+# state facts, intentions, and preferences and the record holds both. Which
+# speaker said it is part of the memory, and trust ranks a person's statement
+# above an agent's.
 #
 # Episodic memory is missing on purpose: the session is the record, so there is
 # nothing to extract. Sensory memory has no channel in text. Working memory is
@@ -58,8 +64,8 @@ KINDS: dict[str, Noul] = {
     ),
     "prospective": Noul(
         instructions=(
-            "Does this transcript state something the person means to do later, or leave "
-            "something unfinished that they will come back to?"
+            "Does this transcript state something one of the speakers means to do later, "
+            "or leave something unfinished that they will come back to?"
         ),
         criteria={
             "true": "It names an intention, a follow-up, or work left open.",
@@ -68,8 +74,8 @@ KINDS: dict[str, Noul] = {
     ),
     "preference": Noul(
         instructions=(
-            "Does this transcript state how the person wants things done, or name "
-            "something they dislike?"
+            "Does this transcript state how one of the speakers wants things done, or "
+            "name something they dislike?"
         ),
         criteria={
             "true": "It states a taste, a standing preference, or a dislike.",
@@ -78,15 +84,40 @@ KINDS: dict[str, Noul] = {
     ),
     "correction": Noul(
         instructions=(
-            "Does this transcript show the person correcting the agent, rejecting what it "
-            "did, or telling it to do something differently?"
+            "Does this transcript show one speaker correcting the other, rejecting what "
+            "the other did, or telling the other to do something differently?"
         ),
         criteria={
-            "true": "The person pushes back on the agent's work or its choice.",
-            "false": "The person accepts the work or asks for something new.",
+            "true": "One speaker pushes back on the other's work or choice.",
+            "false": "Neither pushes back: the work is accepted, or a new request is made.",
+        },
+    ),
+    "praise": Noul(
+        instructions=(
+            "Does this transcript show one speaker approving of the other's work or its "
+            "approach, rather than only acknowledging that a task finished?"
+        ),
+        criteria={
+            "true": "One speaker says the work or the approach was right, or that it is "
+            "what they wanted.",
+            "false": "One speaker only confirms a task finished, or says nothing about the work.",
         },
     ),
 }
+
+
+def questions_fingerprint() -> str:
+    """A short name for the question set, so a reading records what it was asked.
+
+    The model name cannot do this job, because the questions move without the
+    model moving, and an answer to the old question is not an answer to the new
+    one.
+    """
+    asked = {kind: question.model_dump() for kind, question in KINDS.items()}
+    return hashlib.sha256(json.dumps(asked, sort_keys=True).encode()).hexdigest()[:16]
+
+
+KINDS_FINGERPRINT = questions_fingerprint()
 
 # Entries a harness writes for itself rather than from the conversation. Claude
 # Code and pi both record injected skill text, command wrappers, and interrupt
@@ -126,13 +157,15 @@ SPAN = """
     ORDER BY occurred_at
 """
 
-# One reading per window per model, so a retry writes nothing and a second
-# model can be added beside the first without a migration.
+# One reading per window per model per question set, so a retry writes nothing,
+# a second model can be added beside the first, and changing a question does not
+# leave the old answers standing as though they were answers to the new one.
 RECORD = """
     INSERT INTO classifications
-        (session_id, entry_id, scope_key, model, rounds, transcript, verdicts, best)
-    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-    ON CONFLICT (session_id, entry_id, model) DO NOTHING
+        (session_id, entry_id, scope_key, model, questions_fingerprint, rounds,
+         transcript, verdicts, best)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+    ON CONFLICT (session_id, entry_id, model, questions_fingerprint) DO NOTHING
 """
 
 
@@ -240,6 +273,7 @@ async def classify(
         entry_id,
         found.scope_key,
         settings.classify_model,
+        KINDS_FINGERPRINT,
         settings.classify_rounds,
         found.transcript,
         json.dumps(verdicts),

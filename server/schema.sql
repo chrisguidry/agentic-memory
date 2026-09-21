@@ -182,25 +182,32 @@ CREATE INDEX IF NOT EXISTS logs_harness
 -- was already read, and the reading would no longer be reproducible. This is
 -- the evidence of what the model saw.
 CREATE TABLE IF NOT EXISTS classifications (
-    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id    text NOT NULL,
-    entry_id      text NOT NULL,
-    scope_key     text,
-    model         text NOT NULL,
-    rounds        integer NOT NULL,
-    transcript    text NOT NULL,
-    verdicts      jsonb NOT NULL,
+    id                    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    session_id            text NOT NULL,
+    entry_id              text NOT NULL,
+    scope_key             text,
+    model                 text NOT NULL,
+
+    -- A short hash of the questions that were asked. The model name cannot do
+    -- this job, because the questions move without the model moving, and an
+    -- answer to the old question is not an answer to the new one.
+    questions_fingerprint text NOT NULL,
+    rounds                integer NOT NULL,
+    transcript            text NOT NULL,
+    verdicts              jsonb NOT NULL,
 
     -- The highest probability any kind got, so the queue for the next stage is
     -- a range scan rather than a walk through every verdict.
-    best          real NOT NULL,
-    classified_at timestamptz NOT NULL DEFAULT now()
+    best                  real NOT NULL,
+    classified_at         timestamptz NOT NULL DEFAULT now()
 );
 
--- One reading per window per model, so a retry writes nothing and a second
--- model can be added beside the first without a migration.
+-- One reading per window per model per question set, so a retry writes
+-- nothing, a second model can be added beside the first, and changing a
+-- question does not leave the old answers standing as though they were
+-- answers to the new one.
 CREATE UNIQUE INDEX IF NOT EXISTS classifications_window
-    ON classifications (session_id, entry_id, model);
+    ON classifications (session_id, entry_id, model, questions_fingerprint);
 
 CREATE INDEX IF NOT EXISTS classifications_best
     ON classifications (best DESC, classified_at DESC);

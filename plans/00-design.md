@@ -469,6 +469,55 @@ A memory also carries how useful it has been: how often it was returned,
 how often the turn that received it worked, and when it was last used.
 The outcome flow writes those numbers, and the ranking reads them.
 
+### The exchange is what is read
+
+A reply means what it means next to the turn it answers. "No, the other
+one" says nothing on its own, and a person's most useful statements are
+the ones reacting to something. So what the service reads is the
+exchange: a prompt and the agent turns between it and the prompt before
+it.
+
+What is stored is one statement, and the statement carries the records
+the exchange came from.
+
+A correction is the clearest case. It carries the most information of
+anything in the record and needs its context the most, so a design that
+read only the person's words would drop it.
+
+### Six kinds
+
+A memory is one of six kinds. The kinds are asked for directly rather
+than inferred from the wording of a statement.
+
+| Kind | What it holds |
+|---|---|
+| Semantic | Something about the code, the project, or how something works |
+| Procedural | How something is done here: a command, a step, a way of working |
+| Prospective | Something meant for later, or left unfinished |
+| Preference | How one of the speakers wants things done, or something they dislike |
+| Correction | One speaker pushing back on what the other did |
+| Praise | One speaker approving of the other's work or approach |
+
+Three kinds from the psychology of memory are absent. Episodic memory is
+the record itself, so there is nothing to extract. Sensory memory has no
+channel in text, and the part that maps onto a codebase is the layout of
+the files, which is the scope. Working memory is the session in
+progress.
+
+The record is unusually good at procedural memory. What a person says
+about how work is done is a small fraction of how the work was done, and
+the record holds every command that was run.
+
+The questions name the speakers rather than the person, because both
+sides state facts, intentions, and preferences and the record holds both.
+Which speaker said it belongs to the memory, and trust ranks a person's
+statement above an agent's.
+
+Correction and praise are the two kinds about the agent's own behavior.
+They say what to stop doing and what to keep doing, and praise also feeds
+the outcome counters, which record how often a turn that received a
+memory worked.
+
 ### Time is on every memory twice
 
 The valid interval is the period the statement was true in the world.
