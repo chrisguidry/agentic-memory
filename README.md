@@ -15,6 +15,7 @@ it calls no model.
 |---|---|---|
 | `server/` | Docker Compose | Receives OTLP on `/v1/logs` and writes it to Postgres |
 | `pi/` | A symlink into `~/.pi/agent/extensions/` | Sends each message as it happens |
+| `tools/hook.py` | A Claude Code hook | Sends what a transcript gained on each event |
 | `tools/backfill.py` | The host, through `uv` | Reads the session files a harness already wrote |
 | `tools/harnesses/` | The host | One module per harness, which is the only place a format is read |
 | `tools/scope.py` | The host | Derives a session's scope from the directories it is in |
@@ -53,6 +54,29 @@ curl -s http://127.0.0.1:4318/health
 curl -s "http://127.0.0.1:4318/records?scope=github.com/acme&limit=5"
 ```
 
+## Live capture from Claude Code
+
+`tools/hook.py` is a Claude Code hook. On `UserPromptSubmit`, `Stop`,
+`SubagentStop`, and `SessionEnd` it reads what the session's transcript
+gained since the last event and sends it through the same reader the
+backfill uses, so a record sent live and the same record swept later
+carry one entry id and the service keeps one copy.
+
+The foreground exits in under a tenth of a second and never writes to
+stdout, because a `UserPromptSubmit` hook's stdout goes into the
+conversation. The send runs in a detached process. Each transcript's byte
+offset, entry count, and head fingerprint live in one file under
+`~/.local/state/agentic-memory/claude-code/`, beside `hook.log`, which is
+the only place a failure is written. A transcript that shrinks or whose
+head changes is sent again from the start, and the service drops the
+repeats.
+
+Register it under each of the four events in `~/.claude/settings.json`:
+
+```json
+{"type": "command", "command": "python3 /path/to/agentic-memory/tools/hook.py", "timeout": 5}
+```
+
 ## What a backfill produces
 
 `tools/backfill.py` reads the session files a harness already wrote and
@@ -73,7 +97,7 @@ hook already captured adds nothing.
 
 - No memory is derived, and no model is called.
 - No blackboard exists.
-- Only pi is wired up. Claude Code, OpenWebUI, and the rest come later.
+- pi and Claude Code are wired up live. OpenWebUI and the rest come later.
 - The record holds whatever was in the transcript, secrets included. The
   store is private and redaction is not attempted.
 
