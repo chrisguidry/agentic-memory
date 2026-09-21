@@ -130,6 +130,13 @@ CREATE TABLE IF NOT EXISTS logs (
     error_type        text
 );
 
+-- The unpacked row points at the raw one, and Postgres checks that pointer
+-- on every delete from the raw table. Without an index on the pointer each
+-- check is a scan of the whole unpacked table, and a rebuild or a removal of
+-- one harness's rows takes hours instead of seconds.
+CREATE INDEX IF NOT EXISTS logs_export
+    ON logs (export_id);
+
 CREATE INDEX IF NOT EXISTS logs_session
     ON logs (session_id, occurred_at);
 
