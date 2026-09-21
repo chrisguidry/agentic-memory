@@ -22,6 +22,7 @@ would be given.
 import argparse
 import json
 import time
+from datetime import UTC, datetime
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,6 +37,19 @@ from rich.text import Text
 from scope import scope_of
 
 console = Console()
+
+# Two lines of a statement, near enough. A row that grows without a bound
+# pushes everything under it off the screen, which is how the second panel
+# disappeared in the first place.
+STATEMENT_CHARS = 190
+
+
+def two_lines(statement: str) -> str:
+    """A statement cut to about two lines, with the cut marked."""
+    said = " ".join(statement.split())
+    if len(said) <= STATEMENT_CHARS:
+        return said
+    return said[:STATEMENT_CHARS].rstrip() + "\u2026"
 
 KIND_STYLE = {
     "semantic": "cyan",
@@ -57,14 +71,19 @@ def fetch(endpoint: str, path: str, **params) -> list[dict]:
 
 
 def memories_panel(rows: list[dict], scope: str | None) -> Panel:
-    """What is worth remembering, ranked the way a turn would read it."""
+    """What is worth remembering, ranked the way a turn would read it.
+
+    One statement per row, with its kind and where it applies on the line
+    above it. The statement wraps, so it reads as a sentence rather than as a
+    fragment, and it is cut at two lines so one long statement cannot push the
+    panel below it off the screen. The statement in full is a request away.
+    """
     if not rows:
         body = Text("nothing yet. say something worth remembering.", style="dim")
     else:
-        table = Table(box=None, pad_edge=False, expand=True, show_header=True)
+        table = Table(box=None, pad_edge=False, expand=True, show_header=False, padding=(0, 1))
         table.add_column("", width=4, justify="right", style="dim")
-        table.add_column("kind", width=13)
-        table.add_column("statement", overflow="fold")
+        table.add_column("statement", overflow="fold", ratio=1)
         for row in rows:
             colour = KIND_STYLE.get(row["kind"], "white")
             where = row["scope_key"] or "everywhere"
@@ -72,11 +91,12 @@ def memories_panel(rows: list[dict], scope: str | None) -> Panel:
             # saying so is the difference between a list of what is here and a
             # list of everything the turn was handed.
             inherited = scope is not None and where not in ("everywhere", scope)
-            note = f"{where} \u2191" if inherited else where
             table.add_row(
                 f"{row['score']:.2f}",
-                Text(row["kind"], style=colour),
-                Text(row["statement"]) + Text(f"\n{note}", style="dim"),
+                Text(row["kind"], style=colour)
+                + Text(f"  {where}{' \u2191' if inherited else ''}", style="dim")
+                + Text("\n")
+                + Text(two_lines(row["statement"])),
             )
         body = table
 
@@ -89,26 +109,39 @@ def memories_panel(rows: list[dict], scope: str | None) -> Panel:
     )
 
 
+def ago(classified_at: str | None, now: datetime) -> str:
+    """How long ago a reading was taken, in as few characters as it takes."""
+    if not classified_at:
+        return ""
+    moment = datetime.fromisoformat(classified_at)
+    seconds = int((now - moment).total_seconds())
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
 def readings_panel(rows: list[dict]) -> Panel:
     """What the classifier read most recently, highest first."""
     if not rows:
         body = Text("nothing read yet.", style="dim")
     else:
-        table = Table(box=None, pad_edge=False, expand=True, show_header=False)
-        table.add_column("when", width=8, style="dim")
-        table.add_column("what", overflow="fold")
-        for row in rows[:12]:
-            when = (row["classified_at"] or "")[11:19]
-            best = max(
-                (row[kind] for kind in KIND_STYLE if kind in row),
-                default=0.0,
-            )
+        table = Table(box=None, pad_edge=False, expand=True, show_header=False, padding=(0, 1))
+        table.add_column("when", width=8, style="dim", no_wrap=True, justify="right")
+        table.add_column("what", ratio=1, no_wrap=True, overflow="ellipsis")
+        now = datetime.now(UTC)
+        for row in rows:
+            when = ago(row["classified_at"], now)
+            best = max((row[kind] for kind in KIND_STYLE if kind in row), default=0.0)
             winner = max(
                 (kind for kind in KIND_STYLE if kind in row),
                 key=lambda kind: row[kind],
                 default="",
             )
-            message = " ".join((row["message"] or "").split())[:110]
+            message = " ".join((row["message"] or "").split())
             table.add_row(
                 when,
                 Text(f"{best:.2f} ", style=KIND_STYLE.get(winner, "white"))
@@ -133,7 +166,7 @@ def frame(args, state: dict) -> Group:
 
     return Group(
         memories_panel(state.get("memories", []), args.scope),
-        readings_panel(state.get("readings", [])),
+        readings_panel(state.get("readings", [])[: args.read]),
         Text(
             f"  {state.get('written', 0)} statements written · "
             f"{state.get('read', 0)} messages read · polling {args.endpoint}",
@@ -146,7 +179,7 @@ def poll(args, state: dict) -> None:
     """Get the two lists, and remember how they failed rather than raising."""
     try:
         state["memories"] = fetch(args.endpoint, "/memories", scope_key=args.scope, limit=args.limit)
-        state["readings"] = fetch(args.endpoint, "/classifications", above=0.0, limit=30)
+        state["readings"] = fetch(args.endpoint, "/classifications", above=0.0, limit=args.read)
         state["read"] = len(state["readings"])
         state["written"] = len(state["memories"])
         state["error"] = None
@@ -167,7 +200,8 @@ def main() -> None:
         action="store_true",
         help="read from every scope, rather than this directory's",
     )
-    parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument("--limit", type=int, default=10, help="how many statements to show")
+    parser.add_argument("--read", type=int, default=6, help="how many recent readings to show")
     parser.add_argument("--every", type=float, default=2.0, help="seconds between polls")
     args = parser.parse_args()
 

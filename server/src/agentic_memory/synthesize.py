@@ -84,17 +84,36 @@ You are given one message from a working session, the exchanges leading up to
 it, and the kinds of memory that were found in that message. Write one sentence
 for each kind that was found. Write nothing for a kind that was not listed.
 
-A sentence is what the person would want to read when they start work next
-week. Write it in their vocabulary, using the words they used.
+A statement is what an agent should read before it starts work next week. Test
+every sentence against this: would it still be worth reading if the work it
+came from were finished and forgotten?
 
 Rules:
-- State what is true, not what happened. "The schema is at server/schema.sql"
-  rather than "the person asked about the schema".
+
+- A task is not a memory. "Prototype the first level" describes work in flight
+  and means nothing once it is done. "The first level is not started" describes
+  the state of the work, and that is the form to write.
+
+- Never write an instruction. The subject of the sentence is never the reader.
+  Write "design discussion comes before implementation here", not "do not start
+  implementing yet". An agent cannot tell a remembered rule from a rule it is
+  being given now, so a memory written as an order will be followed at the
+  wrong time.
+
+- Name the subject. A pronoun that points outside its own sentence means
+  nothing to a reader who was not there. Write the name of the thing.
+
+- Write the condition, not the instruction. "Postgres may not be the end state,
+  and a query taking more than a second is the trigger to move" tells a reader
+  when the statement applies. "Continue with the plan" tells them nothing.
+
+- Say which project it is about when it is not about the one the reader is in.
+  "In equipment-operator, spec.zones must declare zone2 and zone3".
+
 - Keep the specifics. A filename, a command, and a version are the parts worth
   remembering. "Prefers modern tooling" is worth nothing.
-- Write a rule as a rule. If the person does not want something done, say so.
-- If it applies to every project rather than this one, say so.
-- If the message carries nothing an agent could act on, write nothing.
+
+- One sentence. No preamble, and no explanation of your reasoning.
 """
 
 INSTRUCTIONS = """Scope: {scope}

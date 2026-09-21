@@ -85,16 +85,15 @@ KINDS: dict[str, Noul] = {
     "prospective": Noul(
         instructions={
             "question": (
-                "Does `message` commit to work that will still need doing after this "
-                "conversation ends?"
+                "Does `message` settle something, defer something, or leave a question "
+                "open, in a way that later work has to respect?"
             ),
             **ABOUT_THE_MESSAGE,
         },
         criteria={
-            "true": "It names a follow-up, a commitment, or work left open that outlives this "
-            "session.",
-            "false": "It asks for something this conversation will finish, or names nothing "
-            "left to do.",
+            "true": "It records a decision, a deferral, or an open question that outlives "
+            "this session.",
+            "false": "It only describes work to do, and settles nothing.",
         },
     ),
     "preference": Noul(
