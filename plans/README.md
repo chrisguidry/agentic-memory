@@ -48,21 +48,18 @@ measured.
 turn the record into memory. A worker reads a window of a session, asks a
 cheap model which kinds of memory are in it, and writes down the
 probabilities. No memory is written.
-* [06, The model calls](06-the-model-calls.md). The worker calls a model
-  for the classifier, the merger, and the writer, and it writes down
-  nothing about the call. One table records every call with the provider,
-  the versioned model, the tokens, the task, and the run, so a deep
-  backfill and ongoing use are both visible.
 
-Nothing after 06 is written. The design says where the work can go, and
-a plan is written when the work is about to start. A plan written now for
-a step six months out would be a guess with a number on it.
+Nothing after this is written, and no plan is open. The design says where
+the work can go, and a plan is written when the work is about to start. A
+plan written now for a step six months out would be a guess with a number
+on it.
 
 ## Completed
 
 * [03, The memories](completed/03-the-memories.md). Closed 2026-09-21.
 * [04, The match](completed/04-the-match.md). Closed 2026-09-21.
 * [05, The merge](completed/05-the-merge.md). Closed 2026-09-21.
+* [06, The model calls](completed/06-the-model-calls.md). Closed 2026-09-21.
 
 01 and 02 describe the record and the classifier, and both are built.
 They were built before this section was kept, so neither was moved here

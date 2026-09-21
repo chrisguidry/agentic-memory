@@ -23,6 +23,7 @@ from docket import CurrentDocket, Depends, Docket, ExponentialRetry, Shared
 from typesafe_sdk import AsyncTypeSafeClient, Noul, TypeSafeBadRequestError
 
 from .db import store_pool
+from .ledger import RecordedSystemOne, calling
 from .settings import Settings, get_settings
 from .window import NOT_PLUMBING, plumbing, window
 
@@ -314,13 +315,23 @@ async def model_client():
         yield client
 
 
+@asynccontextmanager
+async def recorded_model_client(
+    pool: asyncpg.Pool = Shared(store_pool),
+):
+    """The System One client, with a ledger row written for each call."""
+    async with model_client() as client:
+        yield RecordedSystemOne(client, pool)
+
+
 async def classify(
     session_id: str,
     entry_id: str,
+    run: str = "live",
     *,
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Shared(store_pool),
-    client: AsyncTypeSafeClient = Shared(model_client),
+    client: RecordedSystemOne = Shared(recorded_model_client),
     docket: Docket = CurrentDocket(),
     retry: ExponentialRetry = MODEL_RETRY,
 ) -> None:
@@ -331,7 +342,8 @@ async def classify(
 
     state = found.fitted(settings.classify_budget).state()
     try:
-        response = await client.system_one(state=state, questions=KINDS)
+        with calling("classify", session_id=session_id, entry_id=entry_id, run=run):
+            response = await client.system_one(state=state, questions=KINDS)
     except TypeSafeBadRequestError:
         # The provider refused the request itself, so sending it again gets the
         # same refusal. This is a window the fit did not make small enough, or
@@ -373,4 +385,6 @@ async def classify(
     from .synthesize import THRESHOLDS, synthesize
 
     if any(verdicts[kind] >= THRESHOLDS[kind] for kind in THRESHOLDS):
-        await docket.add(synthesize, key=statement_key(session_id, entry_id))(session_id, entry_id)
+        await docket.add(synthesize, key=statement_key(session_id, entry_id))(
+            session_id, entry_id, run
+        )

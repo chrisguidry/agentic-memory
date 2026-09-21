@@ -13,10 +13,10 @@ from typing import Literal
 
 import uvicorn
 from docket import Docket
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from . import db, embed, ingest, recall
+from . import db, embed, ingest, ledger, recall
 from . import memories as statements
 from . import synthesize as writer
 from .classify import (
@@ -58,18 +58,23 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="agentic-memory", lifespan=lifespan)
 
 
-async def schedule(docket: Docket, prompts: list[tuple[str, str]]) -> int:
+async def schedule(docket: Docket, prompts: list[tuple[str, str]], run: str = "live") -> int:
     """Hand every prompt that arrived to the classifier.
 
     The key names the entry and the question set, so a record that arrives twice
     schedules one reading and a re-read under new questions is its own work.
     Scheduling never fails the request: the record is already stored, and a
     prompt that goes unread can be read again from the raw table.
+
+    The run travels with the scheduled task, so every call the task makes and
+    every call the writing after it makes is recorded under the same name.
     """
     scheduled = 0
     for session_id, entry_id in prompts:
         try:
-            await docket.add(classify, key=task_key(session_id, entry_id))(session_id, entry_id)
+            await docket.add(classify, key=task_key(session_id, entry_id))(
+                session_id, entry_id, run
+            )
             scheduled += 1
         except Exception:
             log.warning("could not schedule %s %s", session_id, entry_id, exc_info=True)
@@ -141,6 +146,7 @@ async def reread(
     since: datetime,
     until: datetime | None = None,
     harness: str | None = None,
+    run: str = "reread",
     limit: int = Query(500, ge=1, le=10000),
 ) -> dict:
     """Read messages that happened in a range, under the current questions.
@@ -148,6 +154,9 @@ async def reread(
     This is how the questions get calibrated. Change one, read the last few
     days again, and compare the answers. The readings taken under the questions
     before it stay where they are, named by their own fingerprint.
+
+    The run names the backfill, and it travels into every call the reading and
+    the writing after it make, so the calls of one backfill total together.
     """
     prompts = await readable_prompts(
         request.app.state.pool,
@@ -158,12 +167,12 @@ async def reread(
     )
     return {
         "candidates": len(prompts),
-        "scheduled": await schedule(request.app.state.docket, prompts),
+        "scheduled": await schedule(request.app.state.docket, prompts, run),
     }
 
 
 @app.post("/write")
-async def write(request: Request) -> dict:
+async def write(request: Request, run: str = "write") -> dict:
     """Write statements for every reading that is still worth one.
 
     The writing normally follows a reading on its own. This runs it over the
@@ -176,7 +185,7 @@ async def write(request: Request) -> dict:
         try:
             await request.app.state.docket.add(
                 writer.synthesize, key=statement_key(session_id, entry_id)
-            )(session_id, entry_id)
+            )(session_id, entry_id, run)
         except Exception:
             log.warning("could not schedule writing %s %s", session_id, entry_id, exc_info=True)
     return {"candidates": len(wanted)}
@@ -264,15 +273,75 @@ async def embed_all(request: Request) -> dict:
 
 
 @app.post("/merge")
-async def merge_all(request: Request) -> dict:
+async def merge_all(request: Request, run: str = "merge") -> dict:
     """Merge the near-duplicates already in the table, oldest statement first.
 
     A statement is merged as it is written after this. This pass is for what
     was written before the merge existed, and for a model change that re-embeds
-    the table.
+    the table. The run names the pass, so its calls total under one name.
     """
-    await request.app.state.docket.add(merge_statements, key="merge-statements")()
+    await request.app.state.docket.add(merge_statements, key="merge-statements")(run)
     return {"scheduled": True}
+
+
+@app.get("/usage")
+async def usage(
+    request: Request,
+    by: Literal["day", "model", "task", "run"] = "model",
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[dict]:
+    """What the worker's model calls cost, totalled four ways.
+
+    A total alone cannot separate a deep backfill from ongoing use, so every
+    call records the run it belongs to and the model that answered it. The
+    totals carry no dollars, because a price changes and a token count does
+    not; the exact model stays on every row so a later price can be applied.
+    """
+    return await ledger.usage(request.app.state.pool, by=by, since=since, until=until)
+
+
+@app.get("/model_calls")
+async def model_calls(
+    request: Request,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    task: str | None = None,
+    run: str | None = None,
+    session_id: str | None = None,
+    outcome: str | None = None,
+    cursor: str | None = None,
+    limit: int = Query(100, ge=1, le=1000),
+) -> dict:
+    """The raw model calls, newest first, for reading the figures themselves.
+
+    This is the read an agent pulls when a total is not enough. It narrows by
+    any field, and `next` carries the cursor that continues where the page
+    ended, so a page never repeats a row while new calls arrive. Nothing is
+    aggregated.
+    """
+    try:
+        found = await ledger.calls(
+            request.app.state.pool,
+            since=since,
+            until=until,
+            provider=provider,
+            model=model,
+            task=task,
+            run=run,
+            session_id=session_id,
+            outcome=outcome,
+            cursor=cursor,
+            limit=limit,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {
+        "calls": found,
+        "next": ledger.cursor_of(found[-1]) if len(found) == limit else None,
+    }
 
 
 @app.post("/rebuild")

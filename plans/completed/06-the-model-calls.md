@@ -1,5 +1,7 @@
 # 06, The model calls
 
+Closed 2026-09-21. Built in the commit that built it, and closed after.
+
 ## The problem
 
 The worker calls a model in three places. The classifier asks the System
@@ -94,6 +96,15 @@ with the scheduled task. A call made by that task carries the name, and
 so does a call made by the writing the classification scheduled after it.
 The deep backfill is one name, and its calls total under that name.
 
+## Reading it
+
+`/usage` totals the ledger by day, by model, by task, and by run. A raw
+read returns the calls themselves, newest first, narrowed by provider,
+model, task, run, session, outcome, or a time range, with a cursor that
+continues where the page ended. The cursor is the last row, so a page
+does not repeat a row while new calls arrive. An agent reads the calls
+rather than a total.
+
 ## What it does not do
 
 - **No dollars.** The ledger records tokens and the exact model. A price
@@ -122,6 +133,8 @@ The deep backfill is one name, and its calls total under that name.
   from an arriving record carries `live`.
 - A call whose ledger write fails is logged, and the call proceeds.
 - `/usage` totals calls and tokens by day, by model, by task, and by run.
+- A raw read returns the calls newest first, narrowed by any field, and a
+  cursor continues without repeating a row.
 - The local embedder writes no row.
 
 ## Open questions
@@ -136,3 +149,22 @@ The deep backfill is one name, and its calls total under that name.
 - **Whether the embedder's time belongs here.** It calls no API and
   spends no tokens, and an embed over the table takes minutes. The time
   is real, and the ledger has no place for it.
+
+## What the drill measured
+
+The ledger ran against the compose stack over one writer backfill, named
+`drill`. 401 calls were recorded. 376 went to DeepSeek-V4.1-Flash for the
+writer, 1,274,994 input tokens and 12,433 output. 25 went to Jev for the
+merger, 12,777 input and 500 output. Every call ended `ok`.
+
+`/usage` returned those numbers four ways. By day, one day holds all of
+them. By model, the two models above. By task, `synthesize` and `merge`.
+By run, every call carries `drill`, because the name travelled from the
+`/write` request into each scheduled task and into the calls those tasks
+made. A record that arrives carries `live` instead, which is the default
+and the path the app takes from `/v1/logs`.
+
+The run name is what separates a deep backfill from ongoing use, and the
+drill shows the separation holds end to end. A raw read returned the calls
+newest first and continued from the cursor through a page without
+repeating a row.

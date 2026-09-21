@@ -17,11 +17,16 @@ from typing import Any
 import asyncpg
 import httpx
 from docket import Depends, ExponentialRetry, Shared
-from typesafe_sdk import AsyncTypeSafeClient
 
-from .classify import KIND_COLUMNS, MODEL_RETRY, model_client, questions_fingerprint
+from .classify import (
+    KIND_COLUMNS,
+    MODEL_RETRY,
+    questions_fingerprint,
+    recorded_model_client,
+)
 from .db import store_pool
 from .embed import Embedder, embed_message, shared_embedder
+from .ledger import RecordedCompletions, RecordedSystemOne, calling
 from .memories import retire, standing
 from .merge import merge_message
 from .settings import Settings, get_settings
@@ -199,6 +204,15 @@ async def completions_client():
     """The model client, opened once and shared by every task on a worker."""
     async with httpx.AsyncClient(timeout=90) as client:
         yield client
+
+
+@asynccontextmanager
+async def recorded_completions_client(
+    pool: asyncpg.Pool = Shared(store_pool),
+):
+    """The model client, with a ledger row written for each completion."""
+    async with completions_client() as client:
+        yield RecordedCompletions(client, pool)
 
 
 def writing_from(kind: str) -> bool:
@@ -408,16 +422,18 @@ async def write(
 async def synthesize(
     session_id: str,
     entry_id: str,
+    run: str = "live",
     *,
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Shared(store_pool),
-    client: httpx.AsyncClient = Shared(completions_client),
+    client: RecordedCompletions = Shared(recorded_completions_client),
     embedder: Embedder = Shared(shared_embedder),
-    judge: AsyncTypeSafeClient = Shared(model_client),
+    judge: RecordedSystemOne = Shared(recorded_model_client),
     retry: ExponentialRetry = MODEL_RETRY,
 ) -> None:
     """Turn one classified message into statements, if it is worth any."""
-    written = await write(session_id, entry_id, settings=settings, pool=pool, client=client)
+    with calling("synthesize", session_id=session_id, entry_id=entry_id, run=run):
+        written = await write(session_id, entry_id, settings=settings, pool=pool, client=client)
     if written:
         log.info("wrote %s for %s %s: %s", len(written), session_id, entry_id, written)
         # Embedded here rather than by a later pass, so a statement can be
@@ -432,6 +448,7 @@ async def synthesize(
             entry_id=entry_id,
             model=embedder.model,
             settings=settings,
+            run=run,
         )
         if merged:
             log.info("merged %s statements for %s %s", merged, session_id, entry_id)

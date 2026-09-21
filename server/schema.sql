@@ -369,3 +369,50 @@ CREATE TABLE IF NOT EXISTS injections (
 -- Every read of the turn path asks what one session was handed.
 CREATE INDEX IF NOT EXISTS injections_session
     ON injections (session_id, injected_at DESC);
+
+-- One row for each call the worker makes to a model. The harness's own calls
+-- are in `logs`; these are the calls the service makes, which no harness sees.
+--
+-- The row keeps the versioned model, not the alias that was asked for, because
+-- the alias moves and the answers move with it, and a later price can be
+-- applied to the calls already recorded. A refusal or an error leaves the model
+-- empty when the provider did not report one.
+--
+-- The token columns use the same names as the six the record lifts out of the
+-- harness telemetry into `logs`, so one name means one thing across the two
+-- sources. A provider that does not report one leaves it null.
+--
+-- `run` separates a deep backfill from ongoing use. A record that arrives
+-- schedules its work as `live`, and a range read names the backfill it belongs
+-- to, so the calls of one backfill total under one name.
+CREATE TABLE IF NOT EXISTS model_calls (
+    id                    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    called_at             timestamptz NOT NULL DEFAULT now(),
+
+    provider              text NOT NULL,
+    model                 text,
+    request_id            text,
+
+    -- What the call was for: classify, synthesize, or merge. The session and
+    -- the entry name the message it was made for, when there is one.
+    task                  text NOT NULL,
+    session_id            text,
+    entry_id              text,
+    run                   text NOT NULL DEFAULT 'live',
+
+    input_tokens          bigint,
+    output_tokens         bigint,
+    cache_read_tokens     bigint,
+    cache_write_tokens    bigint,
+    reasoning_tokens      bigint,
+
+    duration_ms           integer,
+    outcome               text NOT NULL,
+    error_type            text
+);
+
+CREATE INDEX IF NOT EXISTS model_calls_called
+    ON model_calls (called_at DESC);
+
+CREATE INDEX IF NOT EXISTS model_calls_run
+    ON model_calls (run, called_at DESC);

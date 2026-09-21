@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from agentic_memory.embed import literal
+from agentic_memory.ledger import RecordedSystemOne
 from agentic_memory.match import match
 from agentic_memory.memories import memories, standing
 from agentic_memory.merge import merge, merge_backlog, merge_message
@@ -308,6 +309,21 @@ class TestMergeMessage:
         )
         assert merged == 1
         assert await live(store) == {"Commits are not amended."}
+
+    async def test_a_merge_call_is_recorded_as_a_merge(self, store):
+        older = await held(store, "Commits are never amended.", said_at=NOW - timedelta(hours=1))
+        await held(store, "Commit history is never rewritten.", vector=at(0.90), said_at=NOW)
+        recorded = RecordedSystemOne(FakeJudge(agrees=True), store)
+        await merge(
+            store,
+            recorded,
+            statement_id=older,
+            model=MODEL,
+            settings=CUTOFFS,
+            run="september-backfill",
+        )
+        (row,) = await store.fetch("SELECT task, run, outcome FROM model_calls")
+        assert (row["task"], row["run"], row["outcome"]) == ("merge", "september-backfill", "ok")
 
 
 def test_both_cutoffs_are_settings():

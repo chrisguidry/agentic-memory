@@ -17,10 +17,11 @@ import logging
 
 import asyncpg
 from docket import Depends, Shared
-from typesafe_sdk import AsyncTypeSafeClient, Noul
+from typesafe_sdk import Noul, TypeSafeBadRequestError
 
-from .classify import model_client
+from .classify import recorded_model_client
 from .db import store_pool
+from .ledger import RecordedSystemOne, calling
 from .memories import retire
 from .settings import Settings, get_settings
 
@@ -55,7 +56,7 @@ YES = 0.5
 # scope, and the moment it was said. A statement with no moment cannot be placed
 # in order, so it is never merged.
 SUBJECT = """
-    SELECT id, statement, kind, scope_key, said_at
+    SELECT id, statement, kind, scope_key, said_at, session_id, entry_id
     FROM memories
     WHERE id = $1
       AND superseded_by IS NULL
@@ -98,22 +99,32 @@ BACKLOG = """
 """
 
 
-async def agrees(client: AsyncTypeSafeClient, first: str, second: str) -> bool:
-    """Whether the model says two statements say the same thing."""
-    response = await client.system_one(
-        state={"first": first, "second": second},
-        questions={"same": SAME},
-    )
+async def agrees(client: RecordedSystemOne, first: str, second: str) -> bool:
+    """Whether the model says two statements say the same thing.
+
+    A refusal is read as a no, so the two statements both stand. The ledger
+    records the refusal, and the pass goes on rather than failing on a request
+    the provider will refuse again.
+    """
+    try:
+        response = await client.system_one(
+            state={"first": first, "second": second},
+            questions={"same": SAME},
+        )
+    except TypeSafeBadRequestError:
+        log.warning("the model refused the merge question", exc_info=True)
+        return False
     return response.nouls["same"].noul >= YES
 
 
 async def merge(
     pool: asyncpg.Pool,
-    client: AsyncTypeSafeClient,
+    client: RecordedSystemOne,
     *,
     statement_id: int,
     model: str,
     settings: Settings,
+    run: str = "live",
 ) -> list[int]:
     """Merge the near-duplicates of one statement, and say which ones ended.
 
@@ -136,12 +147,18 @@ async def merge(
     )
 
     group = [dict(subject)]
-    for neighbour in neighbours:
-        same = neighbour["similarity"] >= settings.merge_upper or await agrees(
-            client, subject["statement"], neighbour["statement"]
-        )
-        if same:
-            group.append(dict(neighbour))
+    with calling(
+        "merge",
+        session_id=subject["session_id"],
+        entry_id=subject["entry_id"],
+        run=run,
+    ):
+        for neighbour in neighbours:
+            same = neighbour["similarity"] >= settings.merge_upper or await agrees(
+                client, subject["statement"], neighbour["statement"]
+            )
+            if same:
+                group.append(dict(neighbour))
 
     if len(group) == 1:
         return []
@@ -171,19 +188,22 @@ WRITTEN = """
 
 async def merge_message(
     pool: asyncpg.Pool,
-    client: AsyncTypeSafeClient,
+    client: RecordedSystemOne,
     *,
     session_id: str,
     entry_id: str,
     model: str,
     settings: Settings,
+    run: str = "live",
 ) -> int:
     """Merge what one message wrote, after its statements have been embedded."""
     written = await pool.fetch(WRITTEN, session_id, entry_id, model)
     merged = 0
     for row in written:
         merged += len(
-            await merge(pool, client, statement_id=row["id"], model=model, settings=settings)
+            await merge(
+                pool, client, statement_id=row["id"], model=model, settings=settings, run=run
+            )
         )
     return merged
 
@@ -192,7 +212,8 @@ async def merge_backlog(
     *,
     settings: Settings,
     pool: asyncpg.Pool,
-    client: AsyncTypeSafeClient,
+    client: RecordedSystemOne,
+    run: str = "live",
 ) -> int:
     """Merge every live statement that has not been merged, oldest first.
 
@@ -210,6 +231,7 @@ async def merge_backlog(
                 statement_id=row["id"],
                 model=settings.embed_model,
                 settings=settings,
+                run=run,
             )
         )
     log.info("merged %s statements over the backlog", merged)
@@ -217,10 +239,11 @@ async def merge_backlog(
 
 
 async def merge_statements(
+    run: str = "live",
     *,
     settings: Settings = Depends(get_settings),
     pool: asyncpg.Pool = Shared(store_pool),
-    client: AsyncTypeSafeClient = Shared(model_client),
+    client: RecordedSystemOne = Shared(recorded_model_client),
 ) -> None:
     """Merge the near-duplicates already in the table, as a task."""
-    await merge_backlog(settings=settings, pool=pool, client=client)
+    await merge_backlog(settings=settings, pool=pool, client=client, run=run)
