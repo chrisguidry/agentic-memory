@@ -40,6 +40,8 @@ def reading(**overrides) -> dict:
         "beyond_this_project": 0.1,
         "forbids": 0.1,
         "said_at": SAID,
+        "actor": "person",
+        "actor_depth": 0,
     }
     found.update(scores)
     found.update(overrides)
@@ -188,6 +190,37 @@ class TestWrite:
         await write("s1", "e1", settings=Settings(), pool=store, client=model)
         (written,) = store.written
         assert written[8] == SAID
+
+    async def test_the_statement_names_who_said_the_message(self):
+        # Trust ranks a person's statement above an agent's, and a reader of the
+        # list is told which it is. Neither is possible if the row does not name
+        # the source.
+        store = FakeStore(reading(semantic=0.95, actor="person", actor_depth=0))
+        model = replying(("semantic", "The repo uses uv."))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        (written,) = store.written
+        assert written[9] == "person"
+        assert written[10] == 0
+
+    async def test_a_statement_from_an_agent_records_the_depth(self):
+        # A prompt an orchestrator wrote for a subagent is depth one, and a
+        # statement from it is the agent's words and not the person's.
+        store = FakeStore(reading(semantic=0.95, actor="agent", actor_depth=2))
+        model = replying(("semantic", "The repo uses uv."))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        (written,) = store.written
+        assert written[9] == "agent"
+        assert written[10] == 2
+
+    async def test_a_statement_with_no_recorded_actor_records_none(self):
+        # An actor the harness did not report is an empty field and not a
+        # guess, so a statement is not silently attributed to the person.
+        store = FakeStore(reading(semantic=0.95, actor=None, actor_depth=None))
+        model = replying(("semantic", "The repo uses uv."))
+        await write("s1", "e1", settings=Settings(), pool=store, client=model)
+        (written,) = store.written
+        assert written[9] is None
+        assert written[10] is None
 
     async def test_a_statement_the_writer_marks_everywhere_is_scoped_to_nothing(self):
         store = FakeStore(reading(semantic=0.95))

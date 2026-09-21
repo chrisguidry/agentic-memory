@@ -205,6 +205,14 @@ CREATE TABLE IF NOT EXISTS classifications (
     -- message readable. The questions inspect the first and use the second.
     state                 jsonb NOT NULL,
 
+    -- Who said the message the reading is of, and how far from the person it
+    -- was said. A prompt the person typed is depth zero, and a prompt an
+    -- orchestrator wrote for a subagent is depth one. The record has it, and a
+    -- reading needs it, because the answers to every question are about that
+    -- message and not about the interchange it came from.
+    actor                 text,
+    actor_depth           integer,
+
     -- One probability per kind of memory, lifted out of the map the model
     -- returned so a query does not have to walk one and a threshold per kind
     -- can use an index. A kind that is added or removed changes these columns,
@@ -277,6 +285,12 @@ CREATE TABLE IF NOT EXISTS memories (
     -- a statement whose time is unknown is never retired by a message.
     said_at               timestamptz,
 
+    -- Who said the message the statement came from, and how far from the person
+    -- it was said. Trust ranks a person's statement above an agent's, and a
+    -- reader should be able to tell which it is.
+    actor                 text,
+    actor_depth           integer,
+
     superseded_by         bigint REFERENCES memories(id),
     superseded_at         timestamptz
 );
@@ -292,6 +306,10 @@ CREATE TABLE IF NOT EXISTS memories (
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_by bigint REFERENCES memories(id);
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_at timestamptz;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS said_at timestamptz;
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS actor text;
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS actor_depth integer;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS actor text;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS actor_depth integer;
 
 -- One statement per message per kind per question set, so a retry writes
 -- nothing and one message can carry a fact and a rule at once.

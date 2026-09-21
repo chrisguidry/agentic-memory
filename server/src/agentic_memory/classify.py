@@ -232,7 +232,7 @@ NOT_PLUMBING = """
 # The prompt being read, and where it happened. A prompt with no entry id of
 # its own cannot be pointed at again, and a plumbing entry is not the person.
 TARGET = f"""
-    SELECT occurred_at, scope_key, body
+    SELECT occurred_at, scope_key, body, actor, actor_depth
     FROM logs
     WHERE session_id = $1 AND entry_id = $2 AND kind = 'prompt'
       AND {NOT_PLUMBING}
@@ -277,7 +277,7 @@ BEFORE = """
 # The kinds in a fixed order, so the columns a reading writes and the questions
 # it asks cannot drift apart.
 KIND_COLUMNS = tuple(KINDS)
-KIND_VALUES = ", ".join(f"${n}" for n in range(8, 8 + len(KIND_COLUMNS)))
+KIND_COLUMNS_VALUES = ", ".join(f"${n}" for n in range(10, 10 + len(KIND_COLUMNS)))
 
 # One reading per window per model per question set, so a retry writes nothing,
 # a second model can be added beside the first, and changing a question does not
@@ -285,8 +285,8 @@ KIND_VALUES = ", ".join(f"${n}" for n in range(8, 8 + len(KIND_COLUMNS)))
 RECORD = f"""
     INSERT INTO classifications
         (session_id, entry_id, scope_key, model, questions_fingerprint, rounds,
-         state, {", ".join(KIND_COLUMNS)})
-    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, {KIND_VALUES})
+         actor, actor_depth, state, {", ".join(KIND_COLUMNS)})
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, {KIND_COLUMNS_VALUES})
     ON CONFLICT (session_id, entry_id, model, questions_fingerprint) DO NOTHING
 """
 
@@ -298,6 +298,8 @@ class Window:
     message: str
     before: str
     scope_key: str | None
+    actor: str | None
+    actor_depth: int | None
 
     def state(self) -> dict[str, str]:
         """The two halves as the model reads them."""
@@ -358,6 +360,8 @@ async def window(
     return Window(
         message=(target["body"] or "").strip(),
         before=spoken(before),
+        actor=target["actor"],
+        actor_depth=target["actor_depth"],
         scope_key=target["scope_key"],
     )
 
@@ -443,6 +447,8 @@ async def classify(
         response.model,
         KINDS_FINGERPRINT,
         settings.classify_rounds,
+        found.actor,
+        found.actor_depth,
         json.dumps(state),
         *(verdicts[kind] for kind in KIND_COLUMNS),
     )

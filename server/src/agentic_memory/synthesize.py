@@ -54,7 +54,7 @@ CORRECTS_EARLIER = 0.70
 # The reading for one message, with the state it judged and every score.
 READING = f"""
     SELECT session_id, entry_id, scope_key, model, questions_fingerprint,
-           state ->> 'before' AS before, state ->> 'message' AS message,
+           actor, actor_depth, state ->> 'before' AS before, state ->> 'message' AS message,
            (SELECT l.occurred_at FROM logs l
              WHERE l.session_id = classifications.session_id
                AND l.entry_id = classifications.entry_id) AS said_at,
@@ -63,14 +63,15 @@ READING = f"""
     WHERE session_id = $1 AND entry_id = $2 AND questions_fingerprint = $3
 """
 
+
 # One statement per message per kind per question set, so a retry writes
 # nothing and one message can hold a fact and a rule at once. The new id comes
 # back because a statement that replaces another one names it.
 RECORD = """
     INSERT INTO memories
         (statement, kind, score, scope_key, session_id, entry_id, model,
-         questions_fingerprint, said_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         questions_fingerprint, said_at, actor, actor_depth)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     ON CONFLICT (session_id, entry_id, kind, questions_fingerprint) DO NOTHING
     RETURNING id
 """
@@ -374,6 +375,8 @@ async def write(
             found["model"],
             found["questions_fingerprint"],
             found["said_at"],
+            found["actor"],
+            found["actor_depth"],
         )
         if new_id is None:
             continue

@@ -106,11 +106,13 @@ def memories_panel(rows: list[dict], scope: str | None) -> Panel:
             # saying so is the difference between a list of what is here and a
             # list of everything the turn was handed.
             inherited = scope is not None and where not in ("everywhere", scope)
+            said_by = row.get("actor") or "nobody recorded"
             table.add_row(
                 f"{row['rank']:.2f}",
                 Text(row["kind"], style=colour)
                 + Text(f"  {where}{' \u2191' if inherited else ''}", style="dim")
                 + Text(f"  {ago(row['created_at'], now)}", style="dim")
+                + Text(f"  by {said_by}", style="dim")
                 + Text("\n")
                 + Text(two_lines(row["statement"])),
             )

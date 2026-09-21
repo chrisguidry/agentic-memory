@@ -55,6 +55,8 @@ def statement(
         "session_id": "s1",
         "entry_id": "e1",
         "model": "jev-1.13.0",
+        "actor": "person",
+        "actor_depth": 0,
         "said_at": said,
         "created_at": written,
     }

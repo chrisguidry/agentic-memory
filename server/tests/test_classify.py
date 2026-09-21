@@ -29,9 +29,21 @@ def said(occurred_at: int, kind: str, body: str) -> dict:
     return {"occurred_at": occurred_at, "kind": kind, "body": body}
 
 
-def asked(occurred_at: int, body: str = "we use uv here", scope_key="github.com/liken-sh") -> dict:
+def asked(
+    occurred_at: int,
+    body: str = "we use uv here",
+    scope_key="github.com/liken-sh",
+    actor="person",
+    actor_depth: int = 0,
+) -> dict:
     """The message a window is built around."""
-    return {"occurred_at": occurred_at, "scope_key": scope_key, "body": body}
+    return {
+        "occurred_at": occurred_at,
+        "scope_key": scope_key,
+        "body": body,
+        "actor": actor,
+        "actor_depth": actor_depth,
+    }
 
 
 class FakeStore:
@@ -301,7 +313,7 @@ class TestClassify:
             docket=FakeDocket(),
         )
         _, values = store.written
-        written = dict(zip(KIND_COLUMNS, values[7:], strict=True))
+        written = dict(zip(KIND_COLUMNS, values[9:], strict=True))
         assert written == dict.fromkeys(KINDS, 0.5)
 
     async def test_the_probabilities_are_kept_rather_than_a_decision_about_them(self):
@@ -315,7 +327,7 @@ class TestClassify:
             docket=FakeDocket(),
         )
         _, values = store.written
-        written = dict(zip(KIND_COLUMNS, values[7:], strict=True))
+        written = dict(zip(KIND_COLUMNS, values[9:], strict=True))
         assert written["semantic"] == 0.91
         assert written["procedural"] == 0.12
 
