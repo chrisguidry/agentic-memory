@@ -177,10 +177,10 @@ CREATE INDEX IF NOT EXISTS logs_harness
 -- threshold is asked at read time. Moving it costs a query instead of reading
 -- every window again.
 --
--- The transcript is kept as well as the record it came from, because the
--- record grows: an entry the harness writes later falls inside a window that
--- was already read, and the reading would no longer be reproducible. This is
--- the evidence of what the model saw.
+-- The state is kept as well as the record it came from, because the record
+-- grows: an entry the harness writes later falls inside a window that was
+-- already read, and the reading would no longer be reproducible from the
+-- record alone. This is the evidence of what the model saw.
 CREATE TABLE IF NOT EXISTS classifications (
     id                    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id            text NOT NULL,
@@ -193,7 +193,10 @@ CREATE TABLE IF NOT EXISTS classifications (
     -- answer to the old question is not an answer to the new one.
     questions_fingerprint text NOT NULL,
     rounds                integer NOT NULL,
-    transcript            text NOT NULL,
+
+    -- The message being judged, and the exchanges before it that make the
+    -- message readable. The questions inspect the first and use the second.
+    state                 jsonb NOT NULL,
     verdicts              jsonb NOT NULL,
 
     -- The highest probability any kind got, so the queue for the next stage is

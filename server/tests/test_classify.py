@@ -1,8 +1,8 @@
 """Reading a window and scoring what kinds of memory are in it.
 
-These cover the window, which is where a mistake is quiet: a window that is
-too short loses the thing a reply replies to, and a window that keeps the
-harness talking to itself scores plumbing as though the person had said it.
+These cover the window, which is where a mistake is quiet. A window that is
+too short loses the thing a reply replies to, and a question that judges the
+window rather than the message scores whatever was corrected earlier.
 """
 
 import json
@@ -10,7 +10,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentic_memory.classify import KINDS, KINDS_FINGERPRINT, classify, plumbing, spoken, window
+from agentic_memory.classify import (
+    KINDS,
+    KINDS_FINGERPRINT,
+    classify,
+    plumbing,
+    spoken,
+    window,
+    worth_reading,
+)
 from agentic_memory.settings import Settings
 
 
@@ -19,18 +27,18 @@ def said(occurred_at: int, kind: str, body: str) -> dict:
     return {"occurred_at": occurred_at, "kind": kind, "body": body}
 
 
-def asked(occurred_at: int, scope_key: str | None = "github.com/liken-sh") -> dict:
-    """The prompt a window is built around."""
-    return {"occurred_at": occurred_at, "scope_key": scope_key}
+def asked(occurred_at: int, body: str = "we use uv here", scope_key="github.com/liken-sh") -> dict:
+    """The message a window is built around."""
+    return {"occurred_at": occurred_at, "scope_key": scope_key, "body": body}
 
 
 class FakeStore:
     """The three queries a window is built from, and the write that follows."""
 
-    def __init__(self, target, recent, span):
+    def __init__(self, target, recent, before):
         self.target = target
         self.recent = recent
-        self.span = span
+        self.before = before
         self.read: list[tuple] = []
         self.written: tuple | None = None
 
@@ -39,7 +47,7 @@ class FakeStore:
 
     async def fetch(self, query, *values):
         self.read.append(values)
-        return self.recent if "ORDER BY occurred_at DESC" in query else self.span
+        return self.recent if "ORDER BY occurred_at DESC" in query else self.before
 
     async def execute(self, query, *values):
         self.written = (query, values)
@@ -60,12 +68,12 @@ class FakeModel:
         )
 
 
-def one_round(body: str = "we use uv here") -> FakeStore:
-    """A store holding a single prompt and nothing else."""
+def one_round(message: str = "we use uv here") -> FakeStore:
+    """A store holding one message and nothing before it."""
     return FakeStore(
-        target=asked(100),
+        target=asked(100, message),
         recent=[{"occurred_at": 100}],
-        span=[said(100, "prompt", body)],
+        before=[],
     )
 
 
@@ -98,18 +106,58 @@ class TestSpoken:
         assert rendered == ""
 
 
+class TestWorthReading:
+    def test_a_prompt_a_person_typed_is_read(self):
+        written = [("s1", "e1", "why is the dedup key on the repo revision?")]
+        assert worth_reading(written) == [("s1", "e1")]
+
+    def test_an_entry_the_harness_wrote_is_not_scheduled(self):
+        # A third of stored prompts are the harness talking to itself, and a
+        # scheduled task for one of them is a task with nothing to do.
+        written = [("s1", "e1", "<command-name>/clear</command-name>")]
+        assert worth_reading(written) == []
+
+    def test_the_body_does_not_come_back_with_the_pair(self):
+        assert worth_reading([("s1", "e1", "hello")]) == [("s1", "e1")]
+
+    def test_a_real_prompt_beside_a_harness_entry_is_still_read(self):
+        written = [
+            ("s1", "e1", "<command-name>/clear</command-name>"),
+            ("s1", "e2", "why is the dedup key on the repo revision?"),
+        ]
+        assert worth_reading(written) == [("s1", "e2")]
+
+
 class TestWindow:
-    async def test_the_window_ends_at_the_prompt_being_read(self):
+    async def test_the_message_is_the_prompt_being_read(self):
         store = FakeStore(
-            target=asked(100),
-            recent=[{"occurred_at": 100}, {"occurred_at": 50}],
-            span=[said(50, "prompt", "first"), said(100, "prompt", "second")],
+            target=asked(100, "the message"), recent=[{"occurred_at": 100}], before=[]
         )
         found = await window(store, "s1", "e9", rounds=5)
-        assert found.transcript == "[person] first\n\n[person] second"
+        assert found.message == "the message"
+
+    async def test_the_exchanges_before_it_are_kept_separate(self):
+        # The questions judge the message and only use the rest to read it, so
+        # the two cannot be handed over as one lump.
+        store = FakeStore(
+            target=asked(100, "the message"),
+            recent=[{"occurred_at": 100}, {"occurred_at": 50}],
+            before=[said(50, "prompt", "earlier"), said(80, "response", "and its answer")],
+        )
+        found = await window(store, "s1", "e9", rounds=5)
+        assert found.before == "[person] earlier\n\n[agent] and its answer"
+
+    async def test_the_message_is_not_repeated_in_what_came_before(self):
+        store = FakeStore(
+            target=asked(100, "the message"),
+            recent=[{"occurred_at": 100}],
+            before=[],
+        )
+        await window(store, "s1", "e9", rounds=5)
+        assert store.read[1] == ("s1", 100, 100)
 
     async def test_the_window_reaches_back_only_as_far_as_asked(self):
-        store = FakeStore(target=asked(100), recent=[{"occurred_at": 100}], span=[])
+        store = FakeStore(target=asked(100), recent=[{"occurred_at": 100}], before=[])
         await window(store, "s1", "e9", rounds=2)
         assert store.read[0] == ("s1", 100, 2)
 
@@ -117,26 +165,32 @@ class TestWindow:
         store = FakeStore(
             target=asked(100),
             recent=[{"occurred_at": 100}, {"occurred_at": 40}],
-            span=[],
+            before=[],
         )
         await window(store, "s1", "e9", rounds=2)
         assert store.read[1] == ("s1", 40, 100)
 
     async def test_a_prompt_that_is_not_in_the_record_is_nothing_to_read(self):
-        store = FakeStore(target=None, recent=[], span=[])
+        store = FakeStore(target=None, recent=[], before=[])
         assert await window(store, "s1", "e9", rounds=5) is None
 
     async def test_the_window_names_the_scope_it_happened_in(self):
-        store = FakeStore(
-            target=asked(100, scope_key="github.com/liken-sh"),
-            recent=[{"occurred_at": 100}],
-            span=[said(100, "prompt", "hello")],
-        )
+        store = FakeStore(target=asked(100), recent=[{"occurred_at": 100}], before=[])
         found = await window(store, "s1", "e9", rounds=5)
         assert found.scope_key == "github.com/liken-sh"
 
 
 class TestClassify:
+    async def test_the_state_holds_the_message_apart_from_what_came_before(self):
+        store = FakeStore(
+            target=asked(100, "the message"),
+            recent=[{"occurred_at": 100}, {"occurred_at": 50}],
+            before=[said(50, "prompt", "earlier")],
+        )
+        model = FakeModel(semantic=0.9)
+        await classify("s1", "e9", settings=Settings(), pool=store, client=model)
+        assert model.state == {"before": "[person] earlier", "message": "the message"}
+
     async def test_the_verdicts_are_written_against_the_entry_that_was_read(self):
         store = one_round()
         await classify(
@@ -208,7 +262,7 @@ class TestClassify:
         }
 
     async def test_a_window_with_nothing_in_it_is_never_sent_to_a_model(self):
-        store = FakeStore(target=None, recent=[], span=[])
+        store = FakeStore(target=None, recent=[], before=[])
         model = FakeModel(semantic=0.9)
         await classify("s1", "e9", settings=Settings(), pool=store, client=model)
         assert model.state is None
@@ -217,6 +271,27 @@ class TestClassify:
         store = one_round()
         await classify("s1", "e9", settings=Settings(), pool=store, client=FakeModel())
         assert store.written is None
+
+
+@pytest.mark.parametrize(
+    "kind", ["semantic", "procedural", "prospective", "preference", "correction", "praise"]
+)
+def test_every_question_judges_the_message_rather_than_the_window(kind):
+    # Scoring the window means every message inherits whatever was corrected
+    # earlier in it, which is how a message about a docket task scored 0.91 on
+    # correction.
+    question = KINDS[kind]
+    assert question.instructions["inspect"] == "`message`"
+    assert "`message`" in question.instructions["question"]
+
+
+@pytest.mark.parametrize(
+    "kind", ["semantic", "procedural", "prospective", "preference", "correction", "praise"]
+)
+def test_every_kind_asks_one_question(kind):
+    question = KINDS[kind]
+    assert question.instructions["question"]
+    assert question.criteria["true"] and question.criteria["false"]
 
 
 def test_the_fingerprint_changes_when_a_question_changes(monkeypatch):
@@ -228,15 +303,6 @@ def test_the_fingerprint_changes_when_a_question_changes(monkeypatch):
     monkeypatch.setitem(
         module.KINDS,
         "semantic",
-        module.KINDS["semantic"].model_copy(update={"instructions": "something else"}),
+        module.KINDS["semantic"].model_copy(update={"instructions": {"question": "else"}}),
     )
     assert module.questions_fingerprint() != before
-
-
-@pytest.mark.parametrize(
-    "kind", ["semantic", "procedural", "prospective", "preference", "correction", "praise"]
-)
-def test_every_kind_asks_one_question(kind):
-    question = KINDS[kind]
-    assert question.instructions
-    assert question.criteria["true"] and question.criteria["false"]

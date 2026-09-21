@@ -21,17 +21,18 @@ log = logging.getLogger("agentic_memory")
 
 
 class Stored(NamedTuple):
-    """What a batch did, and the prompts in it worth reading again.
+    """What a batch did, and the prompts in it that were written.
 
     The prompts leave here rather than being found later, because the caller
     schedules them and a second query would have to guess which of them were
-    new.
+    new. The body goes with them so the caller can tell the person's own words
+    from what the harness wrote for itself.
     """
 
     received: int
     inserted: int
     repeated: int
-    prompts: list[tuple[str, str]]
+    prompts: list[tuple[str, str, str]]
 
     @property
     def counted(self) -> dict[str, int]:
@@ -239,19 +240,19 @@ async def _write_logs(
     resources: list[dict],
     records: list[str],
     exports: list[asyncpg.Record],
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     """Write the unpacked rows for a batch of raw records.
 
     The record is unpacked here rather than at the door, so a change to the
-    unpack also applies to records already stored. The arrival time is copied
-    from the export rather than taken from now, for the same reason: a rebuild
-    reads old records and must not change when they arrived.
+    unpack reaches records already stored. The arrival time is copied from the
+    export rather than taken from now, for the same reason: a rebuild reads old
+    records and must not change when they arrived.
 
-    A prompt is the only record worth reading again, and only one with an
-    entry id of its own can be pointed at, so those come back named.
+    A prompt is the only record worth reading again, and only one with an entry
+    id of its own can be pointed at, so those come back named.
     """
     values = []
-    prompts: list[tuple[str, str]] = []
+    prompts: list[tuple[str, str, str]] = []
     for resource, record, export in zip(resources, records, exports, strict=True):
         unpacked = row(resource, {}, json.loads(record))
         unpacked["export_id"] = export["id"]
@@ -265,7 +266,9 @@ async def _write_logs(
             and unpacked.get("session_id")
             and unpacked.get("entry_id")
         ):
-            prompts.append((unpacked["session_id"], unpacked["entry_id"]))
+            prompts.append(
+                (unpacked["session_id"], unpacked["entry_id"], unpacked.get("body") or "")
+            )
 
     if values:
         await connection.executemany(LOG_INSERT, values)

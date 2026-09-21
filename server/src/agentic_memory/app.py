@@ -14,7 +14,7 @@ from docket import Docket
 from fastapi import FastAPI, Query, Request
 
 from . import db
-from .classify import classify
+from .classify import classify, worth_reading
 from .otlp import walk
 from .settings import get_settings
 
@@ -68,7 +68,7 @@ async def logs(request: Request) -> dict:
     payload = await request.json()
     arrived = list(walk(payload))
     stored = await db.store(request.app.state.pool, arrived)
-    await schedule(request.app.state.docket, stored.prompts)
+    await schedule(request.app.state.docket, worth_reading(stored.prompts))
     return {"partialSuccess": {}, **stored.counted}
 
 

@@ -28,6 +28,16 @@ from .settings import Settings, get_settings
 
 log = logging.getLogger("agentic_memory.classify")
 
+# What every question is told about the two halves of the state. The message is
+# what is being judged. The exchanges before it are there to make the message
+# readable, and judging them instead would score a window rather than a message.
+ABOUT_THE_MESSAGE = {
+    "inspect": "`message`",
+    "focus": (
+        "Judge the message itself. Use `before` only to work out what the message is replying to."
+    ),
+}
+
 # One question per kind of memory the record can hold. Each one asks about a
 # single proposition, because the answer is the probability of that proposition
 # and nothing else. A question about degree would come back as the probability
@@ -37,70 +47,83 @@ log = logging.getLogger("agentic_memory.classify")
 # state facts, intentions, and preferences and the record holds both. Which
 # speaker said it is part of the memory, and trust ranks a person's statement
 # above an agent's.
-#
-# Episodic memory is missing on purpose: the session is the record, so there is
-# nothing to extract. Sensory memory has no channel in text. Working memory is
-# the session in progress.
 KINDS: dict[str, Noul] = {
     "semantic": Noul(
-        instructions=(
-            "Does this transcript state something about the code, the project, or how "
-            "something works, that would still be true a month from now?"
-        ),
+        instructions={
+            "question": (
+                "Does `message` state something about the code, the project, or how "
+                "something works, that would still be true a month from now?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
         criteria={
             "true": "It states a fact about the work or the world.",
             "false": "It is only about this moment, or it states no fact.",
         },
     ),
     "procedural": Noul(
-        instructions=(
-            "Does this transcript say how something is done here, such as a command to "
-            "run, a step in a process, or a way of working?"
-        ),
+        instructions={
+            "question": (
+                "Does `message` say how something is done here, such as a command to "
+                "run, a step in a process, or a way of working?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
         criteria={
             "true": "It describes a way of doing the work that would be followed again.",
             "false": "It describes only this one instance of the work.",
         },
     ),
     "prospective": Noul(
-        instructions=(
-            "Does this transcript state something one of the speakers means to do later, "
-            "or leave something unfinished that they will come back to?"
-        ),
+        instructions={
+            "question": (
+                "Does `message` state something one of the speakers means to do later, "
+                "or leave something unfinished that they will come back to?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
         criteria={
             "true": "It names an intention, a follow-up, or work left open.",
             "false": "It names nothing left to do.",
         },
     ),
     "preference": Noul(
-        instructions=(
-            "Does this transcript state how one of the speakers wants things done, or "
-            "name something they dislike?"
-        ),
+        instructions={
+            "question": (
+                "Does `message` state how one of the speakers wants things done, or "
+                "name something they dislike?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
         criteria={
             "true": "It states a taste, a standing preference, or a dislike.",
             "false": "It states no preference.",
         },
     ),
     "correction": Noul(
-        instructions=(
-            "Does this transcript show one speaker correcting the other, rejecting what "
-            "the other did, or telling the other to do something differently?"
-        ),
+        instructions={
+            "question": (
+                "Does `message` correct the other speaker, reject what the other did, "
+                "or tell the other to do something differently?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
         criteria={
-            "true": "One speaker pushes back on the other's work or choice.",
-            "false": "Neither pushes back: the work is accepted, or a new request is made.",
+            "true": "The speaker of the message pushes back on the other's work.",
+            "false": "The speaker accepts the work, or asks for something new.",
         },
     ),
     "praise": Noul(
-        instructions=(
-            "Does this transcript show one speaker approving of the other's work or its "
-            "approach, rather than only acknowledging that a task finished?"
-        ),
+        instructions={
+            "question": (
+                "Does `message` approve of the other speaker's work or its approach, "
+                "rather than only acknowledging that a task finished?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
         criteria={
-            "true": "One speaker says the work or the approach was right, or that it is "
-            "what they wanted.",
-            "false": "One speaker only confirms a task finished, or says nothing about the work.",
+            "true": "It says the work or the approach was right, or is what was wanted.",
+            "false": "It only confirms a task finished, or says nothing about the work.",
         },
     ),
 }
@@ -132,7 +155,7 @@ NOT_PLUMBING = """
 # The prompt being read, and where it happened. A prompt with no entry id of
 # its own cannot be pointed at again, and a plumbing entry is not the person.
 TARGET = f"""
-    SELECT occurred_at, scope_key
+    SELECT occurred_at, scope_key, body
     FROM logs
     WHERE session_id = $1 AND entry_id = $2 AND kind = 'prompt'
       AND {NOT_PLUMBING}
@@ -149,11 +172,13 @@ RECENT_PROMPTS = f"""
     LIMIT $3
 """
 
-SPAN = """
+# Everything leading up to the message, and not the message itself. The two are
+# read separately because the questions judge one and only use the other.
+BEFORE = """
     SELECT occurred_at, kind, body
     FROM logs
     WHERE session_id = $1 AND kind IN ('prompt', 'response')
-      AND occurred_at >= $2 AND occurred_at <= $3
+      AND occurred_at >= $2 AND occurred_at < $3
     ORDER BY occurred_at
 """
 
@@ -163,23 +188,38 @@ SPAN = """
 RECORD = """
     INSERT INTO classifications
         (session_id, entry_id, scope_key, model, questions_fingerprint, rounds,
-         transcript, verdicts, best)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+         state, verdicts, best)
+    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
     ON CONFLICT (session_id, entry_id, model, questions_fingerprint) DO NOTHING
 """
 
 
 @dataclass(frozen=True)
 class Window:
-    """One prompt, the exchanges leading to it, and where it happened."""
+    """One message, the exchanges before it, and where it happened."""
 
-    transcript: str
+    message: str
+    before: str
     scope_key: str | None
+
+    def state(self) -> dict[str, str]:
+        """The two halves as the model reads them."""
+        return {"before": self.before, "message": self.message}
 
 
 def plumbing(body: str) -> bool:
     """Whether a harness wrote this entry for itself rather than the person."""
     return body.lstrip().startswith(("<", "[Request interrupted", "Base directory for this skill"))
+
+
+def worth_reading(prompts: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
+    """The prompts to read, out of the prompts that were written.
+
+    A harness writes a third of its own plumbing as though the person had typed
+    it. Those are dropped here rather than behind the queue, so a scheduled task
+    is always a task with something to read.
+    """
+    return [(session_id, entry_id) for session_id, entry_id, body in prompts if not plumbing(body)]
 
 
 def spoken(rows: Sequence[Any]) -> str:
@@ -203,12 +243,10 @@ async def window(
     entry_id: str,
     rounds: int,
 ) -> Window | None:
-    """The exchanges leading to one prompt, as text for the model to read.
+    """One message, and the exchanges leading to it.
 
-    The window ends at the prompt being read, because the answer to that
-    prompt does not exist yet. None comes back when the prompt is not in the
-    record or the harness wrote the entry for itself, and both mean there is
-    nothing to read.
+    None comes back when the prompt is not in the record or the harness wrote
+    the entry for itself, and both mean there is nothing to read.
     """
     target = await pool.fetchrow(TARGET, session_id, entry_id)
     if target is None:
@@ -219,8 +257,12 @@ async def window(
         return None
 
     opened = min(found["occurred_at"] for found in recent)
-    span = await pool.fetch(SPAN, session_id, opened, target["occurred_at"])
-    return Window(spoken(span), target["scope_key"])
+    before = await pool.fetch(BEFORE, session_id, opened, target["occurred_at"])
+    return Window(
+        message=(target["body"] or "").strip(),
+        before=spoken(before),
+        scope_key=target["scope_key"],
+    )
 
 
 @asynccontextmanager
@@ -253,15 +295,13 @@ async def classify(
     pool: asyncpg.Pool = Shared(store_pool),
     client: AsyncTypeSafeClient = Shared(model_client),
 ) -> None:
-    """Read one window and write down what kinds of memory are in it."""
+    """Read one message and write down what kinds of memory are in it."""
     found = await window(pool, session_id, entry_id, settings.classify_rounds)
-    if found is None or not found.transcript:
+    if found is None or not found.message:
         return
 
-    response = await client.system_one(
-        state={"transcript": found.transcript},
-        questions=KINDS,
-    )
+    state = found.state()
+    response = await client.system_one(state=state, questions=KINDS)
     verdicts = {kind: answer.noul for kind, answer in response.nouls.items()}
     if not verdicts:
         log.warning("no answers for %s %s", session_id, entry_id)
@@ -275,7 +315,7 @@ async def classify(
         settings.classify_model,
         KINDS_FINGERPRINT,
         settings.classify_rounds,
-        found.transcript,
+        json.dumps(state),
         json.dumps(verdicts),
         max(verdicts.values()),
     )

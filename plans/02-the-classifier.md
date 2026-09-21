@@ -57,6 +57,17 @@ between it and the prompt before it.
 The window ends at the prompt being read, because the answer to that
 prompt does not exist yet. It reaches back five exchanges by default.
 
+The state carries the two halves apart: `message` is the prompt being
+judged, and `before` is the exchanges leading to it. Every question names
+`message` in its instructions and says to use `before` only to work out
+what the message is replying to.
+
+Keeping them apart is the difference between scoring a message and
+scoring a window. Read as one lump, every message inherits whatever was
+corrected earlier in its window: a message about a background task scored
+0.91 on correction because a correction sat four exchanges before it.
+Read apart, the same message scores 0.21.
+
 Measured over one machine's history: 9,140 windows, 1,554 characters at
 the median, 3,583 on average, 8,940 at the ninetieth percentile. The
 whole history is about 33 MB. Reading all of it again costs little, so
@@ -137,9 +148,12 @@ there to keep marginal memories out.
 
 ## How it is proved
 
-- A window carries both sides of the conversation, ends at the prompt
-  being read, and reaches back only as far as asked.
-- An entry the harness wrote for itself never reaches a model.
+- A window carries both sides of the conversation, keeps the message
+  apart from the exchanges before it, and reaches back only as far as
+  asked.
+- Every question inspects `message` and not the window.
+- An entry the harness wrote for itself is never scheduled, so a
+  scheduled task always has something to read.
 - A prompt that arrives twice is read once, because the scheduled work is
   keyed by the entry.
 - The reading is written with every kind's probability and with the
