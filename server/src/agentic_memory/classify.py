@@ -15,18 +15,16 @@ changing the rest.
 import hashlib
 import json
 import logging
-from collections.abc import Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
 
 import asyncpg
 from docket import CurrentDocket, Depends, Docket, ExponentialRetry, Shared
-from typesafe_sdk import AsyncTypeSafeClient, Noul
+from typesafe_sdk import AsyncTypeSafeClient, Noul, TypeSafeBadRequestError
 
 from .db import store_pool
 from .settings import Settings, get_settings
+from .window import NOT_PLUMBING, plumbing, window
 
 log = logging.getLogger("agentic_memory.classify")
 
@@ -219,48 +217,6 @@ def questions_fingerprint() -> str:
 
 KINDS_FINGERPRINT = questions_fingerprint()
 
-# Entries a harness writes for itself rather than from the conversation. Claude
-# Code and pi both record injected skill text, command wrappers, interrupt
-# markers, compaction summaries, and hook output as though the person had typed
-# them, which is a third of everything stored as a prompt and none of what the
-# person wanted. A compaction summary is the worst of these to let through: it
-# is a page of the agent's own words about the whole session, and read as the
-# person's it would put a preference on every sentence in it.
-#
-# The list is kept once, here, and the SQL below is built from it, so the
-# scheduler at the door and the queries that read the record cannot disagree
-# about what the person said.
-PLUMBING_PREFIXES = (
-    "<",
-    "[Request interrupted",
-    "Base directory for this skill",
-    "This session is being continued from a previous conversation",
-    "Stop hook feedback:",
-)
-NOT_PLUMBING = " AND ".join(
-    f"btrim(body) NOT LIKE '{prefix.replace("'", "''")}%'" for prefix in PLUMBING_PREFIXES
-)
-
-# The prompt being read, and where it happened. A prompt with no entry id of
-# its own cannot be pointed at again, and a plumbing entry is not the person.
-TARGET = f"""
-    SELECT occurred_at, scope_key, body, actor, actor_depth
-    FROM logs
-    WHERE session_id = $1 AND entry_id = $2 AND kind = 'prompt'
-      AND {NOT_PLUMBING}
-    LIMIT 1
-"""
-
-RECENT_PROMPTS = f"""
-    SELECT occurred_at
-    FROM logs
-    WHERE session_id = $1 AND kind = 'prompt'
-      AND occurred_at <= $2
-      AND {NOT_PLUMBING}
-    ORDER BY occurred_at DESC
-    LIMIT $3
-"""
-
 # Messages that arrived in a range, for reading a part of the history again.
 # The range is on when the message happened rather than when it was stored, so
 # a backfill of an old session lands in the range it belongs to.
@@ -274,16 +230,6 @@ READABLE = f"""
       AND {NOT_PLUMBING}
     ORDER BY occurred_at DESC
     LIMIT $4
-"""
-
-# Everything leading up to the message, and not the message itself. The two are
-# read separately because the questions judge one and only use the other.
-BEFORE = """
-    SELECT occurred_at, kind, body
-    FROM logs
-    WHERE session_id = $1 AND kind IN ('prompt', 'response')
-      AND occurred_at >= $2 AND occurred_at < $3
-    ORDER BY occurred_at
 """
 
 # The kinds in a fixed order, so the columns a reading writes and the questions
@@ -314,26 +260,6 @@ MODEL_RETRY = ExponentialRetry(
 )
 
 
-@dataclass(frozen=True)
-class Window:
-    """One message, the exchanges before it, and where it happened."""
-
-    message: str
-    before: str
-    scope_key: str | None
-    actor: str | None
-    actor_depth: int | None
-
-    def state(self) -> dict[str, str]:
-        """The two halves as the model reads them."""
-        return {"before": self.before, "message": self.message}
-
-
-def plumbing(body: str) -> bool:
-    """Whether a harness wrote this entry for itself rather than the person."""
-    return body.lstrip().startswith(PLUMBING_PREFIXES)
-
-
 def worth_reading(prompts: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
     """The prompts to read, out of the prompts that were written.
 
@@ -342,51 +268,6 @@ def worth_reading(prompts: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
     is always a task with something to read.
     """
     return [(session_id, entry_id) for session_id, entry_id, body in prompts if not plumbing(body)]
-
-
-def spoken(rows: Sequence[Any]) -> str:
-    """The conversation in a span, as the two sides of it.
-
-    An agent turn arrives as many records and most of them are empty, so the
-    records that hold no text are dropped rather than rendered as blank turns.
-    """
-    lines = []
-    for found in rows:
-        body = (found["body"] or "").strip()
-        if not body or (found["kind"] == "prompt" and plumbing(body)):
-            continue
-        lines.append(f"[{'person' if found['kind'] == 'prompt' else 'agent'}] {body}")
-    return "\n\n".join(lines)
-
-
-async def window(
-    pool: asyncpg.Pool,
-    session_id: str,
-    entry_id: str,
-    rounds: int,
-) -> Window | None:
-    """One message, and the exchanges leading to it.
-
-    None comes back when the prompt is not in the record or the harness wrote
-    the entry for itself, and both mean there is nothing to read.
-    """
-    target = await pool.fetchrow(TARGET, session_id, entry_id)
-    if target is None:
-        return None
-
-    recent = await pool.fetch(RECENT_PROMPTS, session_id, target["occurred_at"], rounds)
-    if not recent:
-        return None
-
-    opened = min(found["occurred_at"] for found in recent)
-    before = await pool.fetch(BEFORE, session_id, opened, target["occurred_at"])
-    return Window(
-        message=(target["body"] or "").strip(),
-        before=spoken(before),
-        actor=target["actor"],
-        actor_depth=target["actor_depth"],
-        scope_key=target["scope_key"],
-    )
 
 
 def task_key(session_id: str, entry_id: str) -> str:
@@ -448,8 +329,16 @@ async def classify(
     if found is None or not found.message:
         return
 
-    state = found.state()
-    response = await client.system_one(state=state, questions=KINDS)
+    state = found.fitted(settings.classify_budget).state()
+    try:
+        response = await client.system_one(state=state, questions=KINDS)
+    except TypeSafeBadRequestError:
+        # The provider refused the request itself, so sending it again gets the
+        # same refusal. This is a window the fit did not make small enough, or
+        # a question the provider will not take, and either is a defect to fix
+        # and then read again, not a transient to wait out.
+        log.warning("%s %s: the model refused the request", session_id, entry_id, exc_info=True)
+        return
     verdicts = {kind: answer.noul for kind, answer in response.nouls.items()}
 
     # A partial answer is a defect rather than data, because a reading missing a

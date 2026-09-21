@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     # something next to what it replies to, so the window holds both sides.
     classify_rounds: int = 5
 
+    # The most characters of state the classifier sends. The provider takes about
+    # 32,000 tokens of state and questions together, and code runs near three
+    # characters a token, so this leaves room for the questions under the limit.
+    classify_budget: int = 60_000
+
 
 @lru_cache
 def get_settings() -> Settings:

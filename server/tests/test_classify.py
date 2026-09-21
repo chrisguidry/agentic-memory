@@ -15,14 +15,12 @@ from agentic_memory.classify import (
     KINDS,
     KINDS_FINGERPRINT,
     classify,
-    plumbing,
     readable_prompts,
-    spoken,
     task_key,
-    window,
     worth_reading,
 )
 from agentic_memory.settings import Settings
+from agentic_memory.window import window
 
 
 def said(occurred_at: int, kind: str, body: str) -> dict:
@@ -118,44 +116,6 @@ def answering(**overrides) -> FakeModel:
     supply one of these rather than a couple of kinds.
     """
     return FakeModel(**{**dict.fromkeys(KINDS, 0.05), **overrides})
-
-
-class TestPlumbing:
-    def test_a_command_wrapper_is_not_the_person(self):
-        assert plumbing("<command-name>/clear</command-name>")
-
-    def test_an_injected_skill_is_not_the_person(self):
-        assert plumbing("Base directory for this skill: /home/someone/.claude/skills/writing")
-
-    def test_an_interrupt_marker_is_not_the_person(self):
-        assert plumbing("[Request interrupted by user]")
-
-    def test_a_compaction_summary_is_not_the_person(self):
-        assert plumbing(
-            "This session is being continued from a previous conversation that ran out "
-            "of context. The summary is below."
-        )
-
-    def test_feedback_from_a_stop_hook_is_not_the_person(self):
-        assert plumbing("Stop hook feedback:\n[a hook said something]")
-
-    def test_what_the_person_typed_is_the_person(self):
-        assert not plumbing("why is the dedup key on the repo revision?")
-
-
-class TestSpoken:
-    def test_both_sides_of_the_conversation_are_rendered(self):
-        rendered = spoken([said(1, "prompt", "use uv"), said(2, "response", "noted")])
-        assert rendered == "[person] use uv\n\n[agent] noted"
-
-    def test_an_empty_agent_turn_is_left_out(self):
-        # An agent turn arrives as many records and most of them hold no text.
-        rendered = spoken([said(1, "prompt", "use uv"), said(2, "response", "")])
-        assert rendered == "[person] use uv"
-
-    def test_a_harness_entry_is_left_out(self):
-        rendered = spoken([said(1, "prompt", "<command-name>/clear</command-name>")])
-        assert rendered == ""
 
 
 class TestWorthReading:
@@ -278,7 +238,43 @@ class TestWindow:
         assert found.scope_key == "github.com/liken-sh"
 
 
+class RefusingModel(FakeModel):
+    """A System One model that refuses the request, as the provider does over budget."""
+
+    async def system_one(self, *, state, questions):
+        from typesafe_sdk import TypeSafeBadRequestError
+
+        raise TypeSafeBadRequestError(400, {"detail": {"error_type": "max_tokens_exceeded"}}, {})
+
+
 class TestClassify:
+    async def test_a_request_the_model_refuses_is_a_defect_and_not_retried(self):
+        # A refusal comes back the same on every attempt, so raising it would
+        # spend the retry policy on a request that cannot succeed.
+        store = one_round()
+        await classify(
+            "s1", "e9", settings=Settings(), pool=store, client=RefusingModel(), docket=FakeDocket()
+        )
+        assert store.written is None
+
+    async def test_the_window_is_cut_to_the_budget_before_it_is_sent(self):
+        store = FakeStore(
+            target=asked(100, "the message"),
+            recent=[{"occurred_at": 100}, {"occurred_at": 50}],
+            before=[said(50, "prompt", "a" * 500), said(80, "response", "b" * 50)],
+        )
+        model = answering()
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(classify_budget=100),
+            pool=store,
+            client=model,
+            docket=FakeDocket(),
+        )
+        assert model.state["message"] == "the message"
+        assert model.state["before"] == "[agent] " + "b" * 50
+
     async def test_the_state_holds_the_message_apart_from_what_came_before(self):
         store = FakeStore(
             target=asked(100, "the message"),
