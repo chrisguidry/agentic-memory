@@ -10,6 +10,7 @@ in front of it.
 import logging
 from datetime import UTC, datetime, timedelta
 
+import asyncpg
 import pytest
 
 from agentic_memory.memories import (
@@ -236,3 +237,65 @@ class TestRetire:
         pool = FakePool()
         await retire(pool, replaced=[7], replacement=9, now=NOW)
         assert pool.ran == [(7, 9, NOW)]
+
+
+async def held(store: asyncpg.Pool, scope_key: str | None, statement: str = "a rule") -> int:
+    """One live statement in the store, filed under a scope, and its id."""
+    return await store.fetchval(
+        """
+        INSERT INTO memories
+            (statement, kind, score, scope_key, session_id, entry_id, model,
+             questions_fingerprint, said_at)
+        VALUES ($1, 'preference', 0.9, $2, 's1', $1, 'jev-1.13.0', 'fp', $3)
+        RETURNING id
+        """,
+        statement,
+        scope_key,
+        NOW,
+    )
+
+
+async def reachable(store: asyncpg.Pool, scope_key: str | None) -> set[str]:
+    return {row["statement"] for row in await memories(store, scope_key=scope_key, now=NOW)}
+
+
+class TestReachable:
+    """The scope is a path, and a statement reaches everything below it.
+
+    These run against the store, because the match is in SQL and a fake
+    could not have found the sibling that a plain prefix reached.
+    """
+
+    @pytest.fixture
+    async def filed(self, store: asyncpg.Pool) -> asyncpg.Pool:
+        await held(store, None, "everywhere")
+        await held(store, "github.com/liken-sh", "the org")
+        await held(store, "github.com/liken-sh/liken", "the repo")
+        await held(store, "github.com/liken_sh", "an underscore")
+        return store
+
+    async def test_an_org_statement_reaches_a_repo_inside_it(self, filed):
+        assert "the org" in await reachable(filed, "github.com/liken-sh/liken")
+
+    async def test_an_org_statement_does_not_reach_a_sibling_with_a_longer_name(self, filed):
+        assert "the org" not in await reachable(filed, "github.com/liken-shady/x")
+
+    async def test_a_repo_statement_does_not_reach_its_org(self, filed):
+        assert "the repo" not in await reachable(filed, "github.com/liken-sh")
+
+    async def test_a_statement_with_no_scope_reaches_everywhere(self, filed):
+        assert "everywhere" in await reachable(filed, "codeberg.org/someone/else")
+
+    async def test_reading_from_no_scope_reaches_everything(self, filed):
+        assert await reachable(filed, None) == {
+            "everywhere",
+            "the org",
+            "the repo",
+            "an underscore",
+        }
+
+    async def test_an_underscore_in_a_scope_is_not_a_wildcard(self, filed):
+        assert "an underscore" not in await reachable(filed, "github.com/likenXsh/liken")
+
+    async def test_a_scope_matches_itself_exactly(self, filed):
+        assert await reachable(filed, "github.com/liken_sh") == {"everywhere", "an underscore"}

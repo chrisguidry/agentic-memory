@@ -54,6 +54,10 @@ CANDIDATES = 40
 # an organization is reachable from a repository inside it, and a statement with
 # no scope is reachable from everywhere.
 #
+# The match is on whole path segments, with `starts_with` rather than LIKE, so
+# `github.com/acme` reaches `github.com/acme/widget` and not
+# `github.com/acme-labs`, and a scope with `_` or `%` in it matches only itself.
+#
 # A read takes the whole reachable slice and orders it in Python, because the rank
 # comes from the kind and the age and Postgres has neither number. A slice is
 # hundreds of rows, so the sort is cheap, and a slice that stops being cheap wants
@@ -66,7 +70,7 @@ REACHABLE = """
       AND ($1::text IS NULL
            OR scope_key IS NULL
            OR scope_key = $1
-           OR $1 LIKE scope_key || '%')
+           OR starts_with($1, scope_key || '/'))
 """
 
 # The statements a message could replace: the live ones reachable from where it
