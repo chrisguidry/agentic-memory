@@ -48,6 +48,10 @@ measured.
 turn the record into memory. A worker reads a window of a session, asks a
 cheap model which kinds of memory are in it, and writes down the
 probabilities. No memory is written.
+* [04, The match](04-the-match.md). The turn path splits in two: a
+  session's first prompt is handed the top of its scope's list, and every
+  prompt after it is handed only the few statements that are about what
+  was typed, found with a small local embedding model, or nothing.
 
 Nothing after this is written. The design says where the work can go, and
 a plan is written when the work is about to start. A plan written now for

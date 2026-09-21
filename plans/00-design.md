@@ -212,10 +212,15 @@ client injects.
   the service records which memories, and when
 ```
 
-The hot set holds more than the turn needs. The service narrows it with
-a lookup and a score, which is not a model call. The injected text goes
-into the newest user message, so the cached prefix of the conversation
-survives.
+The hot set holds more than the turn needs. A session's first prompt is
+handed the top of it. Every prompt after that is handed only what is
+about the prompt: the service embeds the prompt with a small local model,
+reads the nearest statements the session has not seen, and hands over the
+few that stand clear of the rest, or nothing. The embedding takes
+milliseconds and holds nothing outside the process, so the deadline below
+holds. The injected text goes into the newest user message, so the cached
+prefix of the conversation survives. `plans/04-the-match.md` holds the
+match.
 
 ### Maintenance
 
