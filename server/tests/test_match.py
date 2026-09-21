@@ -10,19 +10,13 @@ from datetime import UTC, datetime, timedelta
 import asyncpg
 import pytest
 
-from agentic_memory.embed import Embedder, embed_message, embed_missing, literal, load
+from agentic_memory.embed import Embedder, embed_message, embed_missing, literal
 from agentic_memory.match import baseline, match
 from agentic_memory.recall import handed, turn
 from agentic_memory.settings import Settings
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
 SCOPE = "github.com/acme/widget"
-
-
-@pytest.fixture(scope="session")
-def embedder() -> Embedder:
-    """The real model, loaded once for the whole run."""
-    return load(Settings())
 
 
 async def held(

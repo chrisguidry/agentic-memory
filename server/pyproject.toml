@@ -48,6 +48,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 "src/agentic_memory/classify.py" = ["B008"]
 "src/agentic_memory/synthesize.py" = ["B008"]
 "src/agentic_memory/embed.py" = ["B008"]
+"src/agentic_memory/merge.py" = ["B008"]
 
 [tool.pytest.ini_options]
 # The tasks are async, and a test of one should not need a decorator to say so.

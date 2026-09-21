@@ -28,6 +28,7 @@ from .classify import (
     worth_reading,
 )
 from .db import store_pool
+from .merge import merge_statements
 from .otlp import walk
 from .settings import get_settings
 
@@ -259,6 +260,18 @@ async def injections(
 async def embed_all(request: Request) -> dict:
     """Embed every live statement the model has not, which applies a model change."""
     await request.app.state.docket.add(embed.embed_statements, key="embed-statements")()
+    return {"scheduled": True}
+
+
+@app.post("/merge")
+async def merge_all(request: Request) -> dict:
+    """Merge the near-duplicates already in the table, oldest statement first.
+
+    A statement is merged as it is written after this. This pass is for what
+    was written before the merge existed, and for a model change that re-embeds
+    the table.
+    """
+    await request.app.state.docket.add(merge_statements, key="merge-statements")()
     return {"scheduled": True}
 
 

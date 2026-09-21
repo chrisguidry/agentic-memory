@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     # the handouts in `injections` are labelled.
     recall_margin: float = 0.08
 
+    # Merging statements that say the same thing. The upper cutoff is where two
+    # statements are one sentence with a word moved, read over the table at
+    # 0.95. Between the upper and the lower cutoff an embedding cannot tell a
+    # negation from its opposite, so the System One model is asked. Below the
+    # lower cutoff nothing is compared. Both are read off the table and move as
+    # the corpus does, and the lower one is a guess until the model's answers in
+    # the band are read.
+    merge_upper: float = 0.95
+    merge_lower: float = 0.80
+
 
 @lru_cache
 def get_settings() -> Settings:

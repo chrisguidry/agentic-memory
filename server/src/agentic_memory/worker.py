@@ -11,6 +11,7 @@ from docket import Docket, Worker
 
 from .classify import classify
 from .embed import embed_statements
+from .merge import merge_statements
 from .settings import get_settings
 from .synthesize import synthesize
 
@@ -18,7 +19,7 @@ log = logging.getLogger("agentic_memory.worker")
 
 # Every task the worker can run. A docket holds a name rather than a
 # reference, so a task that is not here is one the worker cannot run.
-TASKS = (classify, synthesize, embed_statements)
+TASKS = (classify, synthesize, embed_statements, merge_statements)
 
 
 async def serve() -> None:

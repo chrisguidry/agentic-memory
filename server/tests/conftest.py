@@ -14,8 +14,21 @@ import asyncpg
 import pytest
 
 from agentic_memory.db import SCHEMA, open_pool
+from agentic_memory.embed import Embedder, load
+from agentic_memory.settings import Settings
 
 TEMPLATE = "agentic_memory_template"
+
+
+@pytest.fixture(scope="session")
+def embedder() -> Embedder:
+    """The real model, loaded once for the whole run.
+
+    Two files need it: the match, to compare a prompt with the statements, and
+    the merge, to compare statements with each other. Loading it takes a second,
+    so one instance is shared rather than one per file.
+    """
+    return load(Settings())
 
 
 @pytest.fixture(scope="session")
