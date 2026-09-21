@@ -64,7 +64,7 @@ CANDIDATES = 40
 # the rank kept as a column.
 REACHABLE = """
     SELECT id, statement, kind, score, scope_key, session_id, entry_id,
-           model, said_at, created_at
+           model, said_at, created_at, actor, actor_depth
     FROM memories
     WHERE superseded_by IS NULL
       AND ($1::text IS NULL

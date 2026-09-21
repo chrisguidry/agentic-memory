@@ -27,11 +27,23 @@ import {
   type Record,
 } from "./otlp";
 import { scopeOf, type Scope } from "./scope";
+import { block, recall } from "./recall";
 
 const ENDPOINT =
   process.env.AGENTIC_MEMORY_ENDPOINT ?? "http://127.0.0.1:4318/v1/logs";
 const MACHINE = process.env.AGENTIC_MEMORY_MACHINE ?? hostname();
 const ENABLED = process.env.AGENTIC_MEMORY_DISABLED !== "1";
+
+// Recall is a second path with its own endpoint and its own deadline. It shares
+// nothing with capture: a batch being sent never delays a turn's ask, and an
+// ask never rides in a batch.
+const RECALL_ENDPOINT =
+  process.env.AGENTIC_MEMORY_RECALL_ENDPOINT ?? ENDPOINT.replace(/\/v1\/logs$/, "/recall");
+const RECALL_LIMIT = Number(process.env.AGENTIC_MEMORY_RECALL_LIMIT ?? "10");
+const RECALL_ENABLED = process.env.AGENTIC_MEMORY_RECALL_DISABLED !== "1";
+// pi holds the turn until this handler returns, so the deadline is short and
+// it is ours. Past it, the turn goes on with no memory.
+const RECALL_DEADLINE_MS = 150;
 
 const BATCH = 64;
 const FLUSH_AFTER_MS = 2_000;
@@ -297,6 +309,37 @@ export default function (pi: ExtensionAPI) {
       await readRepository(pi, ctx.sessionManager.getCwd() ?? ctx.cwd);
     } catch {
       repository = [];
+    }
+  });
+
+  // The turn path. One ask, one block, and nothing here may throw or wait past
+  // the deadline. The block is a message of its own after the prompt, so the
+  // cached prefix of the conversation survives and only the block is new. It is
+  // displayed, because the design says an injection is visible.
+  pi.on("before_agent_start", async (_event, ctx) => {
+    if (!RECALL_ENABLED || !(RECALL_LIMIT > 0)) return;
+    try {
+      const statements = await recall(
+        RECALL_ENDPOINT,
+        {
+          session_id: ctx.sessionManager.getSessionId(),
+          harness: "pi",
+          scope_key: scope?.key,
+          limit: RECALL_LIMIT,
+        },
+        RECALL_DEADLINE_MS,
+      );
+      const content = block(statements);
+      if (content === undefined) return;
+      if (ctx.hasUI) {
+        ctx.ui.notify(`agentic-memory: ${statements.length} statements recalled`, "info");
+      }
+      return {
+        message: { customType: "agentic-memory", content, display: true },
+      };
+    } catch {
+      // No memory this turn, and the turn proceeds.
+      return;
     }
   });
 

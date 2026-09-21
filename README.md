@@ -14,7 +14,7 @@ it calls no model.
 | Piece | Where | What it does |
 |---|---|---|
 | `server/` | Docker Compose | Receives OTLP on `/v1/logs` and writes it to Postgres |
-| `pi/` | A symlink into `~/.pi/agent/extensions/` | Sends each message as it happens |
+| `pi/` | A symlink into `~/.pi/agent/extensions/` | Sends each message as it happens, and asks for memory before each turn |
 | `tools/hook.py` | A Claude Code hook | Sends what a transcript gained on each event |
 | `tools/backfill.py` | The host, through `uv` | Reads the session files a harness already wrote |
 | `tools/harnesses/` | The host | One module per harness, which is the only place a format is read |
@@ -76,6 +76,32 @@ Register it under each of the four events in `~/.claude/settings.json`:
 ```json
 {"type": "command", "command": "python3 /path/to/agentic-memory/tools/hook.py", "timeout": 5}
 ```
+
+## Recall into Claude Code
+
+`tools/recall.py` is the other half of the hook. On `UserPromptSubmit` it
+derives the scope from the working directory, asks the service for the
+statements worth reading there, and hands them to the turn as context in
+the shape the hook docs specify. The service leaves out what it already
+handed this session.
+
+The deadline is 150 milliseconds in all, counted from the interpreter's
+first line, and past it the turn proceeds with nothing. A missing service
+and a slow one look the same from the turn. Nothing but the block is ever
+written to stdout, because on this event stdout is context; failures go
+to `recall.log` beside the capture hook's state. The statements are given
+as the writer wrote them, one line each with kind, scope, who said it, and
+age, so the raw list can be watched landing.
+
+Register it under `UserPromptSubmit` in `~/.claude/settings.json`. The
+`-S` matters: the whole budget is interpreter start.
+
+```json
+{"type": "command", "command": "python3 -S /path/to/agentic-memory/tools/recall.py", "timeout": 5}
+```
+
+`AGENTIC_MEMORY_RECALL_LIMIT` sets how many statements a turn is handed,
+ten by default, and `AGENTIC_MEMORY_ENDPOINT` names the service.
 
 ## What a backfill produces
 

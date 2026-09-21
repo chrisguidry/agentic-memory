@@ -334,3 +334,20 @@ CREATE INDEX IF NOT EXISTS memories_live
 -- column, so the indexes the old ordering needed are gone.
 DROP INDEX IF EXISTS memories_scope;
 DROP INDEX IF EXISTS memories_recent;
+
+-- What a turn was handed, and when. One row per turn that received anything,
+-- naming the statements that went. A turn asks for what its session has not
+-- seen, so this is what makes the next turn's list shorter, and it is the row
+-- the outcome flow will join a turn's cost and result to.
+CREATE TABLE IF NOT EXISTS injections (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    session_id  text NOT NULL,
+    harness     text NOT NULL,
+    scope_key   text,
+    memory_ids  bigint[] NOT NULL,
+    injected_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Every read of the turn path asks what one session was handed.
+CREATE INDEX IF NOT EXISTS injections_session
+    ON injections (session_id, injected_at DESC);

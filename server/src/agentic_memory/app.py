@@ -13,8 +13,9 @@ from typing import Literal
 import uvicorn
 from docket import Docket
 from fastapi import FastAPI, Query, Request
+from pydantic import BaseModel, Field
 
-from . import db, ingest
+from . import db, ingest, recall
 from . import memories as statements
 from . import synthesize as writer
 from .classify import (
@@ -194,6 +195,54 @@ async def memories(
     return await statements.memories(
         request.app.state.pool, scope_key=scope_key, limit=limit, order=order
     )
+
+
+class Ask(BaseModel):
+    """What a client says about the turn that is starting."""
+
+    session_id: str
+    harness: str
+    scope_key: str | None = None
+    limit: int = Field(recall.LIMIT, ge=1, le=recall.LIMIT)
+
+
+@app.post("/recall")
+async def recall_for_turn(request: Request, ask: Ask) -> dict:
+    """What a turn is handed: one lookup and one score, and no model.
+
+    The statements are the live ones reachable from the scope, best first, less
+    whatever this session was already handed. The handout is recorded, so the
+    next turn's list is shorter and the outcome flow has something to join to.
+    """
+    found = await recall.recall(
+        request.app.state.pool,
+        session_id=ask.session_id,
+        harness=ask.harness,
+        scope_key=ask.scope_key,
+        limit=ask.limit,
+    )
+    return {
+        "statements": [
+            {
+                "id": row["id"],
+                "statement": row["statement"],
+                "kind": row["kind"],
+                "scope_key": row["scope_key"],
+                "said_at": row["said_at"].isoformat() if row["said_at"] else None,
+                "actor": row["actor"],
+                "actor_depth": row["actor_depth"],
+            }
+            for row in found
+        ]
+    }
+
+
+@app.get("/injections")
+async def injections(
+    request: Request, session_id: str, limit: int = Query(50, ge=1, le=500)
+) -> list[dict]:
+    """What a session was handed, latest turn first, for watching the experiment."""
+    return await recall.handed(request.app.state.pool, session_id=session_id, limit=limit)
 
 
 @app.post("/rebuild")
