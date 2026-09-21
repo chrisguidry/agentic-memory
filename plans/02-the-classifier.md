@@ -85,7 +85,7 @@ Two things are left out of a window:
 
 ## The kinds
 
-Six questions say what kind of memory is in the message, and three more say
+Six questions say what kind of memory is in the message, and five more say
 what it is about. Each one asks a single yes/no question, because the model
 returns the probability of that proposition and nothing else. Asking about
 degree would return the probability of "yes" rather than a degree.
@@ -98,16 +98,26 @@ degree would return the probability of "yes" rather than a degree.
 | Preference | How one of the speakers wants things done, or something they dislike |
 | Correction | One speaker pushing back on what the other did |
 | Praise | One speaker approving of the other's work or approach |
-| Correction, carried | The thing being corrected predates this conversation |
-| Praise, of the outcome | The approval is of the state of things, not of an action |
+| Corrects earlier | The thing being corrected predates this conversation |
+| Praise of the outcome | The approval is of the state of things, not of an action |
 | About an artifact | The message names a file, a command, or a tool |
+| Beyond this project | The statement would hold in other projects too |
+| Forbids | The message says not to do something |
 
-The last three are asked on every message rather than only when their kind is
+The last five are asked on every message rather than only when their kind is
 present. A question costs tokens and almost no time, because every question in
 a request is answered in one pass, and code decides what was relevant.
 
+Each one separates something the kinds cannot. Forbids averages 0.70 on the
+messages that correct something and 0.22 on the rest, and its distribution is
+sharply two-peaked, with a median of 0.09 and a ninetieth percentile of 0.96.
+Beyond this project averages 0.56 on semantic statements and 0.22 elsewhere.
+Praise of the outcome averages 0.49 when praising and 0.09 when not.
+
 Nothing is asked that code can compute exactly. Which speaker said it, and
-when, are already in the record, so no question covers them.
+when, are already in the record, so no question covers them. Nothing is asked
+that the record makes unreliable either: dates are text to this model rather
+than ordered quantities, so no question asks when something happened.
 
 Three kinds from the psychology of memory are absent.
 
@@ -198,8 +208,10 @@ and this is what that looks like when it is fixed.
   these questions. The provider publishes speed, price, and error rates
   and no accuracy table, so the first measurement is a hand-labelled
   sample of windows rather than a pipeline.
-- **Whether the nine are the right nine.** They come from what the
-  record can support, not from what the second pass needs.
+- **Whether the eleven are the right eleven.** They come from what the
+  record can support, not from what the second pass needs. A dimension
+  earns its place when the thing combining them uses it, and nothing
+  combines them yet.
 - **How a reading is superseded.** A window grows as a session
   continues, so a reading describes the window as it was when it was
   read. The reading keeps the transcript it saw, and it records a

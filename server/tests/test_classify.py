@@ -325,7 +325,7 @@ class TestClassify:
         await classify("s1", "e9", settings=Settings(), pool=store, client=model)
         assert model.questions == KINDS
 
-    async def test_the_kinds_are_the_nine_the_record_can_hold(self):
+    async def test_the_kinds_are_the_eleven_the_record_can_hold(self):
         # Named rather than counted, so adding a question means changing this
         # test on purpose and adding the column it writes.
         assert set(KINDS) == {
@@ -335,9 +335,11 @@ class TestClassify:
             "preference",
             "correction",
             "praise",
-            "correction_carried",
+            "corrects_earlier",
             "praise_outcome",
             "about_artifact",
+            "beyond_this_project",
+            "forbids",
         }
 
     async def test_a_window_with_nothing_in_it_is_never_sent_to_a_model(self):

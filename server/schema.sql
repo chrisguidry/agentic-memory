@@ -215,9 +215,11 @@ CREATE TABLE IF NOT EXISTS classifications (
     preference            real NOT NULL,
     correction            real NOT NULL,
     praise                real NOT NULL,
-    correction_carried    real NOT NULL,
+    corrects_earlier    real NOT NULL,
     praise_outcome        real NOT NULL,
     about_artifact        real NOT NULL,
+    beyond_this_project   real NOT NULL,
+    forbids               real NOT NULL,
 
     classified_at         timestamptz NOT NULL DEFAULT now()
 );

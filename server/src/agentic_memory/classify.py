@@ -78,7 +78,7 @@ KINDS: dict[str, Noul] = {
         },
         criteria={
             "true": "It describes a way of doing the work that would be followed again.",
-            "false": "It describes only this one instance of the work.",
+            "false": "It describes this one run of the work, and not a way of doing it.",
         },
     ),
     "prospective": Noul(
@@ -138,7 +138,7 @@ KINDS: dict[str, Noul] = {
     # The kinds above say what is there. These say what it is about, and they are
     # asked alongside rather than only when their kind is present, because a
     # question costs tokens and almost no time and code decides what is relevant.
-    "correction_carried": Noul(
+    "corrects_earlier": Noul(
         instructions={
             "question": (
                 "Does `message` correct a belief or a decision that was already in place "
@@ -176,6 +176,31 @@ KINDS: dict[str, Noul] = {
         criteria={
             "true": "It names a file, a command, or a tool.",
             "false": "It is about the work in general, and names no particular thing.",
+        },
+    ),
+    "beyond_this_project": Noul(
+        instructions={
+            "question": (
+                "Does `message` state something that would hold in other projects too, "
+                "rather than only in this one?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
+        criteria={
+            "true": "It states a rule or a fact that is not particular to this project.",
+            "false": "It is only true of this project, or it states nothing about how to work.",
+        },
+    ),
+    "forbids": Noul(
+        instructions={
+            "question": (
+                "Does `message` say not to do something, or name something that should be avoided?"
+            ),
+            **ABOUT_THE_MESSAGE,
+        },
+        criteria={
+            "true": "It rules something out, or names something to stay away from.",
+            "false": "It asks for something to be done, or rules nothing out.",
         },
     ),
 }
