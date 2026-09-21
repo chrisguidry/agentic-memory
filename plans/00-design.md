@@ -52,15 +52,21 @@ writes the result to a hot set in Redis, one hot set per person and
 project. A turn reads the hot set. The read is an in-memory lookup, and
 it calls no model.
 
+Deriving memory is two passes. A cheap classifier reads a window and
+scores which kinds of memory are in it, and a larger model reads only
+what scored highly. The first pass stores a probability rather than a
+decision about it, so the threshold belongs to whoever reads the table
+and moving it costs a query instead of reading every window again.
+
 | Part | What it does | On the turn path |
 |---|---|---|
 | A shim | A few lines of glue between a harness hook and an SDK | Yes, for capture and injection |
 | The client | Sweeps session files, backfills, asks for memory | Only the ask |
 | The collector | The front door. Receives OTLP, routes, buffers, retries | No |
-| The service | Stores the record, reads the blackboard | Yes |
+| The service | Stores the record, schedules work, reads the blackboard | Yes |
 | The blackboard | The hot set and the briefing, in Redis | Read only |
-| The worker | Derives, ranks, consolidates, writes the hot set | No |
-| Postgres | The record and the memories | Behind the blackboard |
+| The worker | Classifies, derives, ranks, consolidates, writes the hot set | No |
+| Postgres | The record, the readings, and the memories | Behind the blackboard |
 
 The blackboard is derived state. Empty Redis and the next read falls
 back to Postgres, and the worker warms the hot set again. Nothing

@@ -7,11 +7,14 @@ dependencies = [
     "asyncpg>=0.30",
     "fastapi>=0.115",
     "pydantic-settings>=2.0",
+    "pydocket>=0.25",
+    "typesafe-sdk>=0.7",
     "uvicorn[standard]>=0.32",
 ]
 
 [project.scripts]
 agentic-memory = "agentic_memory.app:main"
+agentic-memory-worker = "agentic_memory.worker:main"
 
 [dependency-groups]
 dev = [
@@ -34,3 +37,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# A task declares what it needs as a call in the default, which is how docket
+# and FastAPI both express dependency injection. B008 exists to catch a
+# default built once at import time, and this one is resolved per task.
+"src/agentic_memory/classify.py" = ["B008"]
+
+[tool.pytest.ini_options]
+# The tasks are async, and a test of one should not need a decorator to say so.
+asyncio_mode = "auto"

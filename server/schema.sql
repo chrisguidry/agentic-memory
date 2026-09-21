@@ -169,3 +169,41 @@ CREATE INDEX IF NOT EXISTS logs_occurred
 
 CREATE INDEX IF NOT EXISTS logs_harness
     ON logs (harness);
+
+-- What the classifier read, and what it made of it. One row per prompt that
+-- was read, written by the worker rather than at the door.
+--
+-- The probabilities are kept rather than a decision about them, so the
+-- threshold is asked at read time. Moving it costs a query instead of reading
+-- every window again.
+--
+-- The transcript is kept as well as the record it came from, because the
+-- record grows: an entry the harness writes later falls inside a window that
+-- was already read, and the reading would no longer be reproducible. This is
+-- the evidence of what the model saw.
+CREATE TABLE IF NOT EXISTS classifications (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    session_id    text NOT NULL,
+    entry_id      text NOT NULL,
+    scope_key     text,
+    model         text NOT NULL,
+    rounds        integer NOT NULL,
+    transcript    text NOT NULL,
+    verdicts      jsonb NOT NULL,
+
+    -- The highest probability any kind got, so the queue for the next stage is
+    -- a range scan rather than a walk through every verdict.
+    best          real NOT NULL,
+    classified_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- One reading per window per model, so a retry writes nothing and a second
+-- model can be added beside the first without a migration.
+CREATE UNIQUE INDEX IF NOT EXISTS classifications_window
+    ON classifications (session_id, entry_id, model);
+
+CREATE INDEX IF NOT EXISTS classifications_best
+    ON classifications (best DESC, classified_at DESC);
+
+CREATE INDEX IF NOT EXISTS classifications_scope
+    ON classifications (scope_key, classified_at DESC);

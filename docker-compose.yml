@@ -1,4 +1,5 @@
-# A local stack: the store, and the service that writes to it.
+# A local stack: the store, the queue, the service that writes to the store,
+# and the worker that reads it.
 #
 # The host port for Postgres is 5433 rather than 5432 so this container never
 # collides with a Postgres a person runs for something else. Inside the
@@ -27,12 +28,26 @@ services:
       timeout: 3s
       retries: 30
 
+  redis:
+    image: redis:8-alpine
+    # Docket holds its queue in a Redis stream, so the data has to survive a
+    # restart or work scheduled before one is lost.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   server:
     build: ./server
     environment:
       AGENTIC_MEMORY_DATABASE_URL: postgresql://agentic_memory:agentic_memory@postgres:5432/agentic_memory
       AGENTIC_MEMORY_HOST: 0.0.0.0
       AGENTIC_MEMORY_PORT: "4318"
+      AGENTIC_MEMORY_REDIS_URL: redis://redis:6379/0
     ports:
       - "4318:4318"
     volumes:
@@ -51,6 +66,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -61,8 +78,29 @@ services:
       timeout: 3s
       retries: 10
 
+  # Reading the record is a separate process from writing it, so a model call
+  # that takes seconds cannot hold up an ingest. There is no reload here, so an
+  # edit to the source needs `docker compose restart worker`.
+  worker:
+    build: ./server
+    environment:
+      AGENTIC_MEMORY_DATABASE_URL: postgresql://agentic_memory:agentic_memory@postgres:5432/agentic_memory
+      AGENTIC_MEMORY_REDIS_URL: redis://redis:6379/0
+      # The key keeps its own name because that is what the SDK looks for.
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:?run direnv allow, or export TYPESAFE_API_KEY}
+    volumes:
+      # Read-only, so the container never writes into the working tree.
+      - ./server/src:/app/src:ro
+    command: ["python", "-m", "agentic_memory.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres-data:
+  redis-data:
 
 networks:
   default:

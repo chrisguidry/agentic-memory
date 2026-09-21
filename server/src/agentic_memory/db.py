@@ -11,13 +11,37 @@ raw one does not.
 
 import json
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 import asyncpg
 
 from .otlp import raw, resource_row, row, scope_row
 
 log = logging.getLogger("agentic_memory")
+
+
+class Stored(NamedTuple):
+    """What a batch did, and the prompts in it worth reading again.
+
+    The prompts leave here rather than being found later, because the caller
+    schedules them and a second query would have to guess which of them were
+    new.
+    """
+
+    received: int
+    inserted: int
+    repeated: int
+    prompts: list[tuple[str, str]]
+
+    @property
+    def counted(self) -> dict[str, int]:
+        """The part of this an OTLP response reports."""
+        return {
+            "received": self.received,
+            "inserted": self.inserted,
+            "repeated": self.repeated,
+        }
+
 
 # One statement for the batch, returning only the rows that were new, so the
 # unpack writes only those and a repeat costs a write and nothing else.
@@ -146,14 +170,14 @@ async def _scope_id(connection: asyncpg.Connection, scope: dict) -> int:
     return identifier
 
 
-async def store(pool: asyncpg.Pool, arrived: list[tuple[dict, dict, dict]]) -> dict[str, int]:
+async def store(pool: asyncpg.Pool, arrived: list[tuple[dict, dict, dict]]) -> Stored:
     """Write a batch and report what happened to it.
 
     `arrived` is a list of `(resource, scope, record)`, which is what the OTLP
     walk yields.
     """
     if not arrived:
-        return {"received": 0, "inserted": 0, "repeated": 0}
+        return Stored(received=0, inserted=0, repeated=0, prompts=[])
 
     async with pool.acquire() as connection, connection.transaction():
         raws = [
@@ -175,22 +199,22 @@ async def store(pool: asyncpg.Pool, arrived: list[tuple[dict, dict, dict]]) -> d
             [found["record"] for found in raws],
         )
 
-        if fresh:
-            await _unpack(connection, raws, fresh)
+        prompts = await _unpack(connection, raws, fresh) if fresh else []
 
-    return {
-        "received": len(arrived),
-        "inserted": len(fresh),
-        "repeated": len(arrived) - len(fresh),
-    }
+    return Stored(
+        received=len(arrived),
+        inserted=len(fresh),
+        repeated=len(arrived) - len(fresh),
+        prompts=prompts,
+    )
 
 
 async def _unpack(
     connection: asyncpg.Connection,
     raws: list[dict[str, Any]],
     fresh: list[asyncpg.Record],
-) -> None:
-    """Write the unpacked form of the records that were new."""
+) -> list[tuple[str, str]]:
+    """Write the unpacked form of the records that were new, and name the prompts."""
     # The raw insert returns the session and the entry, so the record a row
     # belongs to is found by the pair it was built from.
     by_entry = {(found["session_id"], found["entry_id"]): index for index, found in enumerate(raws)}
@@ -200,13 +224,14 @@ async def _unpack(
         for found in fresh
         if (index := by_entry.get((found["session_id"], found["entry_id"]))) is not None
     ]
-    await _write_logs(
+    prompts = await _write_logs(
         connection,
         [raws[index]["payload"] for index, _ in picked],
         [raws[index]["record"] for index, _ in picked],
         [found for _, found in picked],
     )
     await connection.execute(MARK_UNPACKED, [found["id"] for found in fresh])
+    return prompts
 
 
 async def _write_logs(
@@ -214,15 +239,19 @@ async def _write_logs(
     resources: list[dict],
     records: list[str],
     exports: list[asyncpg.Record],
-) -> int:
+) -> list[tuple[str, str]]:
     """Write the unpacked rows for a batch of raw records.
 
     The record is unpacked here rather than at the door, so a change to the
     unpack also applies to records already stored. The arrival time is copied
     from the export rather than taken from now, for the same reason: a rebuild
     reads old records and must not change when they arrived.
+
+    A prompt is the only record worth reading again, and only one carrying an
+    entry id of its own can be pointed at, so those come back named.
     """
     values = []
+    prompts: list[tuple[str, str]] = []
     for resource, record, export in zip(resources, records, exports, strict=True):
         unpacked = row(resource, {}, json.loads(record))
         unpacked["export_id"] = export["id"]
@@ -231,9 +260,16 @@ async def _write_logs(
         unpacked["scope_id"] = export["scope_id"]
         values.append(tuple(unpacked.get(column) for column in LOG_COLUMNS))
 
+        if (
+            unpacked.get("kind") == "prompt"
+            and unpacked.get("session_id")
+            and unpacked.get("entry_id")
+        ):
+            prompts.append((unpacked["session_id"], unpacked["entry_id"]))
+
     if values:
         await connection.executemany(LOG_INSERT, values)
-    return len(values)
+    return prompts
 
 
 async def rebuild(pool: asyncpg.Pool, batch: int = 500) -> dict[str, int]:
@@ -263,13 +299,16 @@ async def rebuild(pool: asyncpg.Pool, batch: int = 500) -> dict[str, int]:
 
             last = found[-1]["id"]
             async with connection.transaction():
-                written += await _write_logs(
+                # The unpack names the prompts in the batch, and a rebuild has
+                # no one to hand them to, so they are dropped here.
+                await _write_logs(
                     connection,
                     [json.loads(row["payload"]) for row in found],
                     [row["record"] for row in found],
                     found,
                 )
                 await connection.execute(MARK_UNPACKED, [row["id"] for row in found])
+            written += len(found)
 
     return {"rebuilt": written}
 
@@ -282,10 +321,11 @@ async def count(pool: asyncpg.Pool) -> dict[str, int]:
     writing rather than a bug in the counting.
     """
     query = """
-        SELECT (SELECT count(*) FROM otel_exports) AS exports,
-               (SELECT count(*) FROM logs)         AS logs,
-               (SELECT count(*) FROM resources)    AS resources,
-               (SELECT count(*) FROM scopes)       AS scopes,
+        SELECT (SELECT count(*) FROM otel_exports)     AS exports,
+               (SELECT count(*) FROM logs)            AS logs,
+               (SELECT count(*) FROM resources)       AS resources,
+               (SELECT count(*) FROM scopes)          AS scopes,
+               (SELECT count(*) FROM classifications) AS classifications,
                (SELECT count(*) FROM otel_exports WHERE unpacked_at IS NULL) AS pending
     """
     async with pool.acquire() as connection:
@@ -329,4 +369,29 @@ async def recent(
 
     async with pool.acquire() as connection:
         found = await connection.fetch(query, *values)
+    return [dict(record) for record in found]
+
+
+async def classified(
+    pool: asyncpg.Pool,
+    *,
+    scope_key: str | None = None,
+    above: float = 0.0,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """The windows the classifier read, above a probability the caller picks.
+
+    The threshold arrives with the query rather than sitting in the table,
+    because the reading is a probability and the decision about it belongs to
+    whoever is asking.
+    """
+    query = """
+        SELECT session_id, entry_id, scope_key, model, rounds, verdicts, best, classified_at
+        FROM classifications
+        WHERE best >= $1 AND ($2::text IS NULL OR scope_key = $2)
+        ORDER BY best DESC, classified_at DESC
+        LIMIT $3
+    """
+    async with pool.acquire() as connection:
+        found = await connection.fetch(query, above, scope_key, limit)
     return [dict(record) for record in found]

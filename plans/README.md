@@ -44,6 +44,10 @@ measured.
   Go client that sweeps and backfills session files from this machine or
   from a named source, and the first SDK. No model is called and nothing
   is derived.
+* [02, The classifier](02-the-classifier.md). The first of two passes that
+turn the record into memory. A worker reads a window of a session, asks a
+cheap model which kinds of memory are in it, and writes down the
+probabilities. No memory is written.
 
 Nothing after this is written. The design says where the work can go, and
 a plan is written when the work is about to start. A plan written now for
