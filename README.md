@@ -122,8 +122,9 @@ matches well enough. In both forms the service leaves out what it already
 handed this session. [`plans/completed/04-the-match.md`](plans/completed/04-the-match.md)
 holds the match.
 
-The deadline is 150 milliseconds in all, counted from the interpreter's
-first line, and past it the turn proceeds with nothing. A missing service
+The deadline is half a second in all, counted from the interpreter's first
+line, and `AGENTIC_MEMORY_RECALL_DEADLINE_MS` sets it. Past it the turn
+proceeds with nothing. A missing service
 and a slow one look the same from the turn. Nothing but the block is ever
 written to stdout, because on this event stdout is context; failures go
 to `recall.log` beside the capture hook's state. The statements are given
@@ -138,10 +139,12 @@ Register it under `UserPromptSubmit` in `~/.claude/settings.json`. The
 ```
 
 `AGENTIC_MEMORY_RECALL_LIMIT` caps how many statements a turn is handed,
-ten by default, and `AGENTIC_MEMORY_ENDPOINT` names the service. The
-endpoint may be `http` or `https`, and `AGENTIC_MEMORY_AUTHORIZATION` is
-sent whole as the `Authorization` header when it is set, so a service
-behind a proxy can ask for `Basic ...` or `Bearer ...`.
+ten by default. `AGENTIC_MEMORY_RECALL_ENDPOINT` names the recall URL, and
+`AGENTIC_MEMORY_ENDPOINT` names the capture URL; a hook that sets only the
+latter uses it for both, which is what a local stack does. Either may be
+`http` or `https`, and `AGENTIC_MEMORY_AUTHORIZATION` is sent whole as the
+`Authorization` header when it is set, so a service behind a proxy can ask
+for `Basic ...` or `Bearer ...`.
 
 ## What a backfill produces
 

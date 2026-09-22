@@ -48,6 +48,11 @@ class Service:
         authorizations = self.authorizations
 
         class Handler(BaseHTTPRequestHandler):
+            # Answer the way a proxy in front of the service does: HTTP/1.1,
+            # a promised length, and the connection held open for the next
+            # request. A reader that waits for a close never reaches the end.
+            protocol_version = "HTTP/1.1"
+
             def do_POST(self) -> None:
                 asked.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
                 authorizations.append(self.headers.get("Authorization"))
@@ -55,8 +60,10 @@ class Service:
                 answer = json.dumps({"statements": statements}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(answer)))
                 self.end_headers()
                 self.wfile.write(answer)
+                self.close_connection = False
 
             def log_message(self, *args: Any) -> None:
                 pass
@@ -172,6 +179,20 @@ class TestTheBlock:
             assert ask(service.endpoint, repo, state_dir) is None
         finally:
             service.stop()
+
+
+class TestReadingTheAnswer:
+    def test_a_kept_alive_answer_is_read_by_its_length(self, repo, state_dir):
+        # The service answers and holds the connection open, so the block has
+        # to arrive at the length the answer promised rather than at a close
+        # that never comes.
+        service = Service([statement("Postgres is the store.")])
+        try:
+            block = ask(service.endpoint, repo, state_dir, deadline=0.5)
+        finally:
+            service.stop()
+        assert block is not None
+        assert "Postgres is the store." in block
 
 
 class TestNothingOnFailure:

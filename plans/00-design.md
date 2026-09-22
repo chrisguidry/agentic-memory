@@ -569,12 +569,14 @@ survives and only the injected text is new.
 
 Claude Code blocks the turn until that hook returns, and its default
 timeout is 30 seconds. A hook that stalls stalls the session, which is
-why the deadline is ours, and why it is 150 ms.
+why the deadline is ours, and why it is half a second when the service is
+not on the same machine as the client.
 
 Three rules hold the path to its invariants.
 
-- A hard deadline of 150 ms. Past it the client injects nothing and the
-  turn proceeds.
+- A hard deadline, half a second by default and set with
+  `AGENTIC_MEMORY_RECALL_DEADLINE_MS`. Past it the client injects nothing
+  and the turn proceeds.
 - The injection is visible. The terminal shows what arrived, and the
   session record carries it.
 - A failure never reaches the model. A missing service, an empty hot
@@ -621,7 +623,7 @@ because the client is the only component that knows about harnesses.
 ### Latency binds an interactive surface only
 
 A person waits for an interactive turn, so that turn path carries a
-deadline of 150 ms.
+deadline of half a second.
 
 Nothing else in the table waits for a person. An autonomous agent has
 no deadline, so it can ask for more and wait while a model ranks what it

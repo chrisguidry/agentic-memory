@@ -44,9 +44,12 @@ const RECALL_ENDPOINT =
   process.env.AGENTIC_MEMORY_RECALL_ENDPOINT ?? ENDPOINT.replace(/\/v1\/logs$/, "/recall");
 const RECALL_LIMIT = Number(process.env.AGENTIC_MEMORY_RECALL_LIMIT ?? "10");
 const RECALL_ENABLED = process.env.AGENTIC_MEMORY_RECALL_DISABLED !== "1";
-// pi holds the turn until this handler returns, so the deadline is short and
-// it is ours. Past it, the turn goes on with no memory.
-const RECALL_DEADLINE_MS = 150;
+// pi holds the turn until this handler returns, so the deadline is ours. Half
+// a second covers a service reached over a network; past it, the turn goes on
+// with no memory.
+const RECALL_DEADLINE_MS = Number(
+  process.env.AGENTIC_MEMORY_RECALL_DEADLINE_MS ?? "500",
+);
 
 const BATCH = 64;
 const FLUSH_AFTER_MS = 2_000;

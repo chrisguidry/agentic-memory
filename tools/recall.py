@@ -45,7 +45,10 @@ from typing import Any
 # Measured from the first line of the program rather than from the request, so
 # the interpreter's own start counts against the budget.
 STARTED = time.monotonic()
-DEADLINE = 0.150
+# The turn waits for this hook, so the deadline is the client's, not the
+# service's. Half a second covers a service reached over a network; a
+# deployment that wants a tighter or looser one sets its own.
+DEADLINE = float(os.environ.get("AGENTIC_MEMORY_RECALL_DEADLINE_MS", "500")) / 1000.0
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:4318/recall"
 LOG = "recall.log"
@@ -63,7 +66,13 @@ def main() -> int:
     """Read the payload, ask, and print the block. Always exit zero."""
     try:
         payload = json.load(sys.stdin)
-        endpoint = os.environ.get("AGENTIC_MEMORY_ENDPOINT", DEFAULT_ENDPOINT)
+        # Recall first, then the generic variable a local stack sets, then the
+        # loopback. Capture and recall are two hooks with two paths, and the
+        # generic variable means the capture path, so the specific one wins.
+        endpoint = os.environ.get(
+            "AGENTIC_MEMORY_RECALL_ENDPOINT",
+            os.environ.get("AGENTIC_MEMORY_ENDPOINT", DEFAULT_ENDPOINT),
+        )
         limit = int(os.environ.get("AGENTIC_MEMORY_RECALL_LIMIT", DEFAULT_LIMIT))
         block = recall(
             payload, endpoint=endpoint, limit=limit, state_dir=STATE_DIR, started=STARTED
@@ -167,6 +176,11 @@ def post(endpoint: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
     the request needs nothing a socket does not have. Over TLS the handshake
     counts against the same deadline, so a service that is slow to answer and
     one that is slow to connect look the same from the turn.
+
+    The body is read by the length the response promises, never until the
+    connection closes. A proxy in front of the service answers HTTP/1.1 and
+    holds the connection open for the next request, so a reader that waits for
+    a close waits out the whole deadline with the answer already in hand.
     """
     if endpoint.startswith("https://"):
         secure, rest = True, endpoint[len("https://") :]
@@ -190,25 +204,53 @@ def post(endpoint: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
         (host, int(port or (443 if secure else 80))), timeout=timeout
     )
     if secure:
-        connection = ssl.create_default_context().wrap_socket(connection, server_hostname=host)
+        context = ssl.create_default_context()
+        # HTTP/1.1 and nothing else, so the proxy answers in the one protocol
+        # this reader understands.
+        context.set_alpn_protocols(["http/1.1"])
+        connection = context.wrap_socket(connection, server_hostname=host)
+
+    def receive() -> bytes:
+        """One read, with whatever is left of the deadline on it."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("the deadline passed while reading the answer")
+        connection.settimeout(remaining)
+        return connection.recv(65536)
+
     with connection:
         connection.sendall(request)
         received = bytearray()
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("the deadline passed while reading the answer")
-            connection.settimeout(remaining)
-            chunk = connection.recv(65536)
+        while b"\r\n\r\n" not in received:
+            chunk = receive()
             if not chunk:
                 break
             received.extend(chunk)
+        head, _, body = bytes(received).partition(b"\r\n\r\n")
+        promised = content_length(head)
+        while promised is not None and len(body) < promised:
+            chunk = receive()
+            if not chunk:
+                break
+            body += chunk
+        if promised is None:
+            # Nothing promised a length, so the close is the only end there is.
+            while chunk := receive():
+                body += chunk
 
-    head, _, rest = bytes(received).partition(b"\r\n\r\n")
     status = head.split(b" ", 2)
     if len(status) < 2 or status[1] != b"200":
         raise ValueError(f"the service answered {head.splitlines()[0]!r}")
-    return json.loads(rest)
+    return json.loads(body[:promised] if promised is not None else body)
+
+
+def content_length(head: bytes) -> int | None:
+    """The body length a response promises, or nothing when it promises none."""
+    for line in head.split(b"\r\n")[1:]:
+        name, _, value = line.partition(b":")
+        if name.strip().lower() == b"content-length":
+            return int(value.strip())
+    return None
 
 
 def block(statements: list[dict[str, Any]], now: datetime) -> str:
