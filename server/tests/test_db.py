@@ -11,7 +11,7 @@ import asyncpg
 import pytest
 
 from agentic_memory.classify import KIND_COLUMNS
-from agentic_memory.db import classified
+from agentic_memory.db import classified, metrics
 
 KINDS = ("semantic", "procedural", "correction", "praise")
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
@@ -77,3 +77,41 @@ class TestClassified:
     async def test_a_kind_the_reader_does_not_ask_about_is_refused(self, store):
         with pytest.raises(ValueError):
             await classified(store, kinds=KINDS, kind="forbids")
+
+
+class TestMetrics:
+    """The numbers a scrape reads, which a dashboard and an alert both use."""
+
+    async def test_a_live_memory_is_counted_and_a_retired_one_is_not(self, store):
+        retired = await store.fetchval(
+            """
+            INSERT INTO memories
+                (statement, kind, score, session_id, entry_id, model,
+                 questions_fingerprint)
+            VALUES ('Postgres is the store.', 'preference', 0.9, 's1', 'e1', 'jev', 'fp')
+            RETURNING id
+            """
+        )
+        await store.execute(
+            """
+            INSERT INTO memories
+                (statement, kind, score, session_id, entry_id, model,
+                 questions_fingerprint, superseded_by)
+            VALUES ('Postgres is the database.', 'preference', 0.9, 's1', 'e2', 'jev', 'fp', $1)
+            """,
+            retired,
+        )
+        found = await metrics(store)
+        assert found["gauges"]["memories_live"] == 1
+        assert found["gauges"]["memories_retired"] == 1
+
+    async def test_the_calls_come_back_under_their_task(self, store):
+        await store.execute(
+            """
+            INSERT INTO model_calls (provider, task, input_tokens, outcome)
+            VALUES ('typesafe', 'classify', 10, 'ok'), ('deepinfra', 'synthesize', 20, 'ok'),
+                   ('deepinfra', 'synthesize', 30, 'ok')
+            """
+        )
+        found = await metrics(store)
+        assert dict(found["calls"]) == {"classify": 1, "synthesize": 2}

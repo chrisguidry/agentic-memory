@@ -14,6 +14,7 @@ from typing import Literal
 import uvicorn
 from docket import Docket
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from . import db, embed, ingest, ledger, recall
@@ -85,6 +86,24 @@ async def schedule(docket: Docket, prompts: list[tuple[str, str]], run: str = "l
 async def health(request: Request) -> dict:
     """Report whether the store answers, and how much it holds."""
     return {"status": "ok", **await db.count(request.app.state.pool)}
+
+
+@app.get("/metrics")
+async def metrics(request: Request) -> PlainTextResponse:
+    """The numbers Prometheus scrapes, in its text format.
+
+    A scrape reads the store, so the numbers are current rather than counted in
+    the process, and a PodMonitor over this endpoint is the whole metrics side.
+    """
+    found = await db.metrics(request.app.state.pool)
+    lines: list[str] = []
+    for name, value in found["gauges"].items():
+        lines.append(f"# TYPE agentic_memory_{name} gauge")
+        lines.append(f"agentic_memory_{name} {value}")
+    lines.append("# TYPE agentic_memory_model_calls counter")
+    for task, calls in found["calls"]:
+        lines.append(f'agentic_memory_model_calls{{task="{task}"}} {calls}')
+    return PlainTextResponse("\n".join(lines) + "\n")
 
 
 @app.post("/v1/logs")

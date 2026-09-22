@@ -1,0 +1,12 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: agentic-memory
+spec:
+  selector:
+    matchLabels:
+      app: agentic-memory-api
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

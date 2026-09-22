@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# A Postgres with pgvector, for a consumer that has none. The statement
+# embeddings need the `vector` extension, which the stock Postgres image does
+# not carry, so this is the pgvector build of the same version the tests and
+# the compose stack run.
+#
+# The password below is a placeholder, the same one the compose file uses. A
+# real deployment generates one and overrides it; the Service is
+# `postgres.<namespace>.svc.cluster.local`, and the api and the worker reach
+# the store through `AGENTIC_MEMORY_DATABASE_URL`.
+resources:
+  - postgres.yaml
+
+secretGenerator:
+  - name: agentic-memory-postgres
+    literals:
+      - password=agentic_memory
+    options:
+      disableNameSuffixHash: true

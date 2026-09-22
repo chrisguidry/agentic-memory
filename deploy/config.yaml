@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentic-memory
+data:
+  # The address the server binds, and where the baked embedding model lives.
+  # Everything else the service and the worker read comes from the Secret of
+  # the same name.
+  AGENTIC_MEMORY_HOST: "0.0.0.0"
+  AGENTIC_MEMORY_PORT: "4318"
+  AGENTIC_MEMORY_EMBED_CACHE: /app/models

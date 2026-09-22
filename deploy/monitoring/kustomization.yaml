@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# The component sets no namespace: the parent kustomization names one, and
+# that wins over anything a generator sets. The dashboard therefore travels as
+# a ConfigMap in the app's namespace, which a Grafana sidecar that searches all
+# namespaces picks up by the `grafana_dashboard` label. A Grafana restricted to
+# one namespace needs the ConfigMap patched into it.
+resources:
+  - podmonitor.yaml
+
+configMapGenerator:
+  - name: agentic-memory-dashboard
+    files:
+      - dashboards/agentic-memory.json
+    options:
+      # The sidecar reloads a dashboard by name, so a hash suffix would leave
+      # the old one loaded beside the new one.
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"

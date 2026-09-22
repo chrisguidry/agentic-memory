@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# A Redis for the docket queue, for a consumer that has none. Append-only is
+# on, because the queue is a stream and work scheduled before a restart has to
+# survive it. The Service is `redis.<namespace>.svc.cluster.local`, and the
+# api and the worker reach it through `AGENTIC_MEMORY_REDIS_URL`.
+resources:
+  - redis.yaml

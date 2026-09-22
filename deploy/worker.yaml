@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    app: agentic-memory-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentic-memory-worker
+  template:
+    metadata:
+      labels:
+        app: agentic-memory-worker
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: worker
+          image: ghcr.io/chrisguidry/agentic-memory
+          # The same image as the api, reading the record instead of writing
+          # it. It serves no port, so it carries no probes; the process either
+          # runs or the pod is restarted.
+          command:
+            - python
+            - -m
+            - agentic_memory.worker
+          envFrom:
+            - configMapRef:
+                name: agentic-memory
+            - secretRef:
+                name: agentic-memory
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              memory: 1Gi

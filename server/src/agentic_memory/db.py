@@ -73,6 +73,32 @@ async def count(pool: asyncpg.Pool) -> dict[str, int]:
     return dict(found)
 
 
+METRICS = """
+    SELECT (SELECT count(*) FROM otel_exports)                                 AS exports,
+           (SELECT count(*) FROM otel_exports WHERE unpacked_at IS NULL)       AS pending,
+           (SELECT count(*) FROM logs)                                         AS logs,
+           (SELECT count(*) FROM resources)                                    AS resources,
+           (SELECT count(*) FROM scopes)                                       AS scopes,
+           (SELECT count(*) FROM classifications)                              AS classifications,
+           (SELECT count(*) FROM memories WHERE superseded_by IS NULL)         AS memories_live,
+           (SELECT count(*) FROM memories WHERE superseded_by IS NOT NULL)     AS memories_retired
+"""
+
+
+async def metrics(pool: asyncpg.Pool) -> dict[str, Any]:
+    """The numbers a scrape reads.
+
+    Two round trips rather than one: the gauges describe one moment, and the
+    model calls need a label per task. A scrape runs every thirty seconds, so
+    the counts can afford to walk a table that only grows.
+    """
+    gauges = dict(await pool.fetchrow(METRICS))
+    calls = await pool.fetch(
+        "SELECT task, count(*) AS calls FROM model_calls GROUP BY task ORDER BY task"
+    )
+    return {"gauges": gauges, "calls": [(row["task"], row["calls"]) for row in calls]}
+
+
 async def recent(
     pool: asyncpg.Pool,
     *,

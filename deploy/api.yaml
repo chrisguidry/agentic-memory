@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app: agentic-memory-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentic-memory-api
+  template:
+    metadata:
+      labels:
+        app: agentic-memory-api
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: api
+          image: ghcr.io/chrisguidry/agentic-memory
+          command:
+            - uvicorn
+            - agentic_memory.app:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "4318"
+          envFrom:
+            - configMapRef:
+                name: agentic-memory
+            - secretRef:
+                name: agentic-memory
+          ports:
+            - name: http
+              containerPort: 4318
+          # The service applies the schema at startup, which on a fresh store
+          # takes a moment, so the startup probe is the one with room.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            # The embedding model is resident, about 275 MB, in both the api
+            # and the worker.
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels:
+    app: agentic-memory-api
+spec:
+  selector:
+    app: agentic-memory-api
+  ports:
+    - name: http
+      port: 4318
+      targetPort: http

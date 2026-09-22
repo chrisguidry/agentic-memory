@@ -1,0 +1,83 @@
+{
+  "title": "agentic-memory",
+  "uid": "agentic-memory",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Records held",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "agentic_memory_logs",
+          "legendFormat": "logs"
+        },
+        {
+          "refId": "B",
+          "expr": "agentic_memory_classifications",
+          "legendFormat": "classifications"
+        }
+      ]
+    },
+    {
+      "title": "Memories",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "agentic_memory_memories_live",
+          "legendFormat": "live"
+        },
+        {
+          "refId": "B",
+          "expr": "agentic_memory_memories_retired",
+          "legendFormat": "retired"
+        }
+      ]
+    },
+    {
+      "title": "Model calls by task",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (task) (agentic_memory_model_calls)",
+          "legendFormat": "{{task}}"
+        }
+      ]
+    },
+    {
+      "title": "Queue depth",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "agentic_memory_pending",
+          "legendFormat": "pending exports"
+        }
+      ]
+    }
+  ]
+}

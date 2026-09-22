@@ -75,6 +75,14 @@ which mounts the source and reloads it.
 docker build --target prod -t agentic-memory:prod server
 ```
 
+## Deploying it
+
+`deploy/` holds a kustomize base that runs the api and the worker, and three
+optional components: a PodMonitor with a Grafana dashboard, an in-cluster
+Postgres with pgvector, and an in-cluster Redis. The base reads a Secret and
+creates no namespace, so a consumer supplies both. [`deploy/README.md`](deploy/README.md)
+lists the Secret's keys and shows an overlay that points at the base.
+
 ## Live capture from Claude Code
 
 `tools/hook.py` is a Claude Code hook. On `UserPromptSubmit`, `Stop`,
