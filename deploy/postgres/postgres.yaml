@@ -66,8 +66,12 @@ spec:
               cpu: 50m
               memory: 256Mi
           volumeMounts:
+            # The volume root is a block device's root and can hold entries a
+            # fresh cluster will not initialize over, so the data directory is
+            # a subdirectory the kubelet makes.
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
+              subPath: pgdata
       volumes:
         - name: postgres-data
           persistentVolumeClaim:
