@@ -42,3 +42,15 @@ jobs:
 
       - name: Test
         run: uv run pytest -q
+
+  tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      # The hooks and the sweep read transcripts and write OTLP with the
+      # standard library, so they need pytest and nothing else.
+      - name: Test
+        run: uv run --with pytest pytest tools/tests -q

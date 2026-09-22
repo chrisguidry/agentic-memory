@@ -5,6 +5,7 @@ helpers in `records.py` and this module puts them on the wire.
 """
 
 import json
+import os
 import platform
 import urllib.request
 from pathlib import Path
@@ -79,10 +80,14 @@ def post(endpoint: str, machine: str, records: list[dict[str, Any]]) -> dict[str
             }
         ]
     }
+    authorization = os.environ.get("AGENTIC_MEMORY_AUTHORIZATION")
+    headers = {"Content-Type": "application/json"}
+    if authorization:
+        headers["Authorization"] = authorization
     request = urllib.request.Request(
         endpoint,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=120) as answer:

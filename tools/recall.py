@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import ssl
 import sys
 import time
 from datetime import UTC, datetime
@@ -162,21 +163,35 @@ def post(endpoint: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
     """One HTTP POST over a socket, with the whole exchange under one timeout.
 
     `urllib` would do this in one line and cost more to import than the
-    service takes to answer. The service is on the loopback and answers in one
-    small JSON body, so the request needs nothing a socket does not have.
+    service takes to answer. The service answers in one small JSON body, so
+    the request needs nothing a socket does not have. Over TLS the handshake
+    counts against the same deadline, so a service that is slow to answer and
+    one that is slow to connect look the same from the turn.
     """
-    if not endpoint.startswith("http://"):
-        raise ValueError(f"only http is spoken here, not {endpoint}")
-    host_and_port, _, path = endpoint[len("http://") :].partition("/")
+    if endpoint.startswith("https://"):
+        secure, rest = True, endpoint[len("https://") :]
+    elif endpoint.startswith("http://"):
+        secure, rest = False, endpoint[len("http://") :]
+    else:
+        raise ValueError(f"only http and https are spoken here, not {endpoint}")
+    host_and_port, _, path = rest.partition("/")
     host, _, port = host_and_port.partition(":")
     payload = json.dumps(body).encode()
+    authorization = os.environ.get("AGENTIC_MEMORY_AUTHORIZATION")
+    header = f"Authorization: {authorization}\r\n" if authorization else ""
     request = (
-        f"POST /{path} HTTP/1.1\r\nHost: {host_and_port}\r\nContent-Type: application/json\r\n"
+        f"POST /{path} HTTP/1.1\r\nHost: {host_and_port}\r\n{header}"
+        f"Content-Type: application/json\r\n"
         f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n"
     ).encode() + payload
 
     deadline = time.monotonic() + timeout
-    with socket.create_connection((host, int(port or 80)), timeout=timeout) as connection:
+    connection = socket.create_connection(
+        (host, int(port or (443 if secure else 80))), timeout=timeout
+    )
+    if secure:
+        connection = ssl.create_default_context().wrap_socket(connection, server_hostname=host)
+    with connection:
         connection.sendall(request)
         received = bytearray()
         while True:

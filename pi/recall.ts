@@ -34,10 +34,14 @@ export async function recall(
 ): Promise<Statement[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
+  const authorization = process.env.AGENTIC_MEMORY_AUTHORIZATION;
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(authorization ? { authorization } : {}),
+      },
       body: JSON.stringify(ask),
       signal: controller.signal,
     });

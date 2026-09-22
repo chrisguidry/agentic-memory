@@ -29,11 +29,14 @@ class Service:
 
     def __init__(self) -> None:
         self.records: list[dict[str, Any]] = []
+        self.authorizations: list[str | None] = []
         received = self.records
+        authorizations = self.authorizations
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                authorizations.append(self.headers.get("Authorization"))
                 batch = body["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
                 received.extend(batch)
                 answer = json.dumps({"inserted": len(batch), "repeated": 0, "failed": 0})
@@ -224,3 +227,9 @@ class TestForeground:
         while not service.records and time.monotonic() < deadline:
             time.sleep(0.05)
         assert service.entry_ids() == ["u1:prompt"]
+
+    def test_the_authorization_header_is_sent(self, transcript, service, state_dir, monkeypatch):
+        monkeypatch.setenv("AGENTIC_MEMORY_AUTHORIZATION", "Bearer a-token")
+        transcript.write_text(line(entry("user", "hello", uuid="u1")))
+        assert ship(transcript, service, state_dir) == 1
+        assert service.authorizations == ["Bearer a-token"]

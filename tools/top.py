@@ -33,6 +33,7 @@ says how many were hidden.
 
 import argparse
 import json
+import os
 import time
 from datetime import UTC, datetime
 import urllib.error
@@ -78,7 +79,11 @@ def fetch(endpoint: str, path: str, **params) -> list[dict]:
     wanted = {key: value for key, value in params.items() if value is not None}
     query = urllib.parse.urlencode(wanted)
     url = f"{endpoint.rstrip('/')}{path}" + (f"?{query}" if query else "")
-    with urllib.request.urlopen(url, timeout=5) as response:
+    request = urllib.request.Request(url)
+    authorization = os.environ.get("AGENTIC_MEMORY_AUTHORIZATION")
+    if authorization:
+        request.add_header("Authorization", authorization)
+    with urllib.request.urlopen(request, timeout=5) as response:
         return json.load(response)
 
 

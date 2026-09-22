@@ -43,11 +43,14 @@ class Service:
 
     def __init__(self, statements: list[dict[str, Any]], delay: float = 0.0) -> None:
         self.asked: list[dict[str, Any]] = []
+        self.authorizations: list[str | None] = []
         asked = self.asked
+        authorizations = self.authorizations
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
                 asked.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                authorizations.append(self.headers.get("Authorization"))
                 time.sleep(delay)
                 answer = json.dumps({"statements": statements}).encode()
                 self.send_response(200)
@@ -239,3 +242,25 @@ class TestTheEnvelope:
         assert done.returncode == 0
         assert done.stdout == ""
         assert done.stderr == ""
+
+
+class TestTheAuthorizationHeader:
+    """A deployment behind a proxy asks for one header, and the hook sends it."""
+
+    def test_it_is_sent_when_the_environment_names_one(self, repo, state_dir, monkeypatch):
+        monkeypatch.setenv("AGENTIC_MEMORY_AUTHORIZATION", "Basic Y2hyaXM6c2VjcmV0")
+        service = Service([statement("x")])
+        try:
+            ask(service.endpoint, repo, state_dir)
+        finally:
+            service.stop()
+        assert service.authorizations == ["Basic Y2hyaXM6c2VjcmV0"]
+
+    def test_it_is_absent_when_the_environment_names_none(self, repo, state_dir, monkeypatch):
+        monkeypatch.delenv("AGENTIC_MEMORY_AUTHORIZATION", raising=False)
+        service = Service([statement("x")])
+        try:
+            ask(service.endpoint, repo, state_dir)
+        finally:
+            service.stop()
+        assert service.authorizations == [None]

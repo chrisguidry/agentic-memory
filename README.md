@@ -138,7 +138,10 @@ Register it under `UserPromptSubmit` in `~/.claude/settings.json`. The
 ```
 
 `AGENTIC_MEMORY_RECALL_LIMIT` caps how many statements a turn is handed,
-ten by default, and `AGENTIC_MEMORY_ENDPOINT` names the service.
+ten by default, and `AGENTIC_MEMORY_ENDPOINT` names the service. The
+endpoint may be `http` or `https`, and `AGENTIC_MEMORY_AUTHORIZATION` is
+sent whole as the `Authorization` header when it is set, so a service
+behind a proxy can ask for `Basic ...` or `Bearer ...`.
 
 ## What a backfill produces
 

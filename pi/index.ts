@@ -31,6 +31,9 @@ import { block, recall } from "./recall";
 
 const ENDPOINT =
   process.env.AGENTIC_MEMORY_ENDPOINT ?? "http://127.0.0.1:4318/v1/logs";
+// The whole Authorization value, so a deployment behind a proxy can ask for
+// `Basic ...` or `Bearer ...` without the extension knowing which.
+const AUTHORIZATION = process.env.AGENTIC_MEMORY_AUTHORIZATION;
 const MACHINE = process.env.AGENTIC_MEMORY_MACHINE ?? hostname();
 const ENABLED = process.env.AGENTIC_MEMORY_DISABLED !== "1";
 
@@ -81,7 +84,10 @@ async function flush(): Promise<void> {
   try {
     await fetch(ENDPOINT, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(AUTHORIZATION ? { authorization: AUTHORIZATION } : {}),
+      },
       body: JSON.stringify(payload(MACHINE, batch)),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
