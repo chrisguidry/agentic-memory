@@ -1,0 +1,44 @@
+name: test
+
+# The suite runs against a real Postgres with pgvector, started by the tests
+# themselves through the runner's Docker, so the job needs nothing else. The
+# embedding model is downloaded once and cached, because loading it is what
+# makes a cold run slow and it does not change between runs.
+
+on:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+
+      # Warm the image so the first test is not waiting on a pull, but let the
+      # pull fail without failing the job; the tests pull it themselves.
+      - name: Warm the store image
+        run: docker pull pgvector/pgvector:0.8.6-pg17-trixie || true
+
+      - uses: actions/cache@v4
+        with:
+          path: server/.fastembed
+          key: fastembed-${{ runner.os }}-${{ hashFiles('server/uv.lock') }}
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Lint
+        run: |
+          uv run ruff check src tests
+          uv run ruff format --check src tests
+
+      - name: Test
+        run: uv run pytest -q

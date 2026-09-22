@@ -46,7 +46,9 @@ services:
       retries: 30
 
   server:
-    build: ./server
+    build:
+      context: ./server
+      target: dev
     environment:
       AGENTIC_MEMORY_DATABASE_URL: postgresql://agentic_memory:agentic_memory@postgres:5432/agentic_memory
       AGENTIC_MEMORY_HOST: 0.0.0.0
@@ -92,7 +94,9 @@ services:
   # that takes seconds cannot hold up an ingest. There is no reload here, so an
   # edit to the source needs `docker compose restart worker`.
   worker:
-    build: ./server
+    build:
+      context: ./server
+      target: dev
     environment:
       AGENTIC_MEMORY_DATABASE_URL: postgresql://agentic_memory:agentic_memory@postgres:5432/agentic_memory
       AGENTIC_MEMORY_REDIS_URL: redis://redis:6379/0

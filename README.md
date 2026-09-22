@@ -3,23 +3,26 @@
 Keeps one person's memories across every coding agent and every machine
 they use.
 
-This repository holds the design in [`plans/`](plans/) and a working proof
-of concept that captures transcripts. The proof of concept does one thing:
-it records what a person and their agents said, as OpenTelemetry log
-records, with enough provenance to work from later. It derives nothing and
-it calls no model.
+This repository holds the design in [`plans/`](plans/) and the service it
+describes. The service records what a person and their agents said, as
+OpenTelemetry log records, with enough provenance to work from later. A
+worker reads that record off the turn path: a cheap model classifies each
+message, a writer turns the ones worth keeping into statements, a merge
+retires the ones that say the same thing, and a ledger records every model
+call the worker makes.
 
 ## What runs
 
 | Piece | Where | What it does |
 |---|---|---|
-| `server/` | Docker Compose | Receives OTLP on `/v1/logs` and writes it to Postgres |
+| `server/` | Docker Compose | Receives OTLP on `/v1/logs`, writes it to Postgres, and answers recall |
+| `server/` (worker) | Docker Compose | Reads the record and calls the models, off the turn path |
 | `pi/` | A symlink into `~/.pi/agent/extensions/` | Sends each message as it happens, and asks for memory before each turn |
 | `tools/hook.py` | A Claude Code hook | Sends what a transcript gained on each event |
 | `tools/backfill.py` | The host, through `uv` | Reads the session files a harness already wrote |
 | `tools/harnesses/` | The host | One module per harness, which is the only place a format is read |
 | `tools/scope.py` | The host | Derives a session's scope from the directories it is in |
-| `docker-compose.yml` | The host | Postgres, and the server |
+| `docker-compose.yml` | The host | Postgres, Redis, the server, and the worker |
 
 A transcript record is a log record. Its body holds the text, and its
 attributes hold the provenance. Every attribute name comes from
@@ -52,6 +55,24 @@ source is mounted into the container and uvicorn reloads it, so an edit to
 ```bash
 curl -s http://127.0.0.1:4318/health
 curl -s "http://127.0.0.1:4318/records?scope=github.com/acme&limit=5"
+```
+
+## The image
+
+CI builds `ghcr.io/chrisguidry/agentic-memory` and pushes it on every push
+to main. The version is calver, the scheme the liken repositories use. A
+release tag is `YYYY.MM.DD-NNN`, and a development build names the release
+it follows, the commits since it, and the commit, as
+`YYYY.MM.DD-NNN-dev-CCC-SHA`. A release tag moves `latest`; a development
+build carries only its own version.
+
+The production image bakes the source, the schema, and the embedding model,
+and runs as a non-root user, so a pod answers its first recall without
+downloading anything. The compose file builds the `dev` target instead,
+which mounts the source and reloads it.
+
+```bash
+docker build --target prod -t agentic-memory:prod server
 ```
 
 ## Live capture from Claude Code
@@ -129,11 +150,13 @@ hook already captured adds nothing.
 
 ## What this is not
 
-- No memory is derived, and no model is called.
-- No blackboard exists.
+- No blackboard exists. The store is read directly.
 - pi and Claude Code are wired up live. OpenWebUI and the rest come later.
 - The record holds whatever was in the transcript, secrets included. The
   store is private and redaction is not attempted.
+- Extraction calls a model on every message and a larger one on the messages
+  worth keeping, so the cost grows with the record. `GET /usage` totals what
+  it has spent, and `GET /model_calls` lists the calls.
 
 ## Where the design is
 

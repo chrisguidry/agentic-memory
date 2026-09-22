@@ -1,5 +1,11 @@
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
+# Nothing here belongs in the image. The Dockerfile copies `src` and
+# `schema.sql` and installs from the lock, so the rest is build-context weight:
+# a virtualenv and a downloaded model that the image builds its own, caches,
+# and the suite, which runs on the host and never in the image.
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.fastembed
+tests
