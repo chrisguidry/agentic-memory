@@ -49,7 +49,7 @@ turn the record into memory. A worker reads a window of a session, asks a
 cheap model which kinds of memory are in it, and writes down the
 probabilities. No memory is written.
 
-Nothing after this is written, and no plan is open. The design says where
+Nothing after this is written, and no other plan is open. The design says where
 the work can go, and a plan is written when the work is about to start. A
 plan written now for a step six months out would be a guess with a number
 on it.
@@ -60,6 +60,7 @@ on it.
 * [04, The match](completed/04-the-match.md). Closed 2026-09-21.
 * [05, The merge](completed/05-the-merge.md). Closed 2026-09-21.
 * [06, The model calls](completed/06-the-model-calls.md). Closed 2026-09-21.
+* [07, The bastion](completed/07-the-bastion.md). Closed 2026-09-22.
 
 01 and 02 describe the record and the classifier, and both are built.
 They were built before this section was kept, so neither was moved here

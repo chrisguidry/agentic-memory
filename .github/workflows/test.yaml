@@ -43,14 +43,31 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
-  tools:
+  host:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: host
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: host/go.mod
 
-      # The hooks and the sweep read transcripts and write OTLP with the
-      # standard library, so they need pytest and nothing else.
+      # gofmt -l lists files that are not formatted and prints nothing when
+      # every file is; the step fails on any output instead of gofmt's own
+      # exit code, which stays 0 either way.
+      - name: Format
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
       - name: Test
-        run: uv run --with pytest pytest tools/tests -q
+        run: go test ./...

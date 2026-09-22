@@ -70,8 +70,9 @@ hook never fired, a harness whose hook was never installed, a record a
 shim dropped, and a harness that has no hook at all. It is the only path
 for Codex.
 
-The sweep is also the only place a harness file format is read, and that
-is deliberate. A fallback reads whatever the harness left behind.
+The sweep reads no harness file format of its own. It sends a file's
+lines whole to the service, which holds the one reader for each format.
+A fallback ships whatever the harness left behind.
 
 ### The backfill
 
@@ -89,7 +90,7 @@ needs when they set the system up, or when they retire a machine that
 holds sessions the service never saw.
 
 ```
-memory sweep --machine <name> --from <path>
+agentic-memory backfill --harness <name> --machine <name> --from <path>
 ```
 
 The machine is named, never inferred. A backfill of a desktop's
@@ -187,13 +188,16 @@ It does not call a model, and nothing in this plan derives anything.
 
 ### The client
 
-One Go binary per platform, with three jobs.
+One Go binary per platform. That binary is `agentic-memory` in
+[`host/`](../host/), built by
+[`07-the-bastion.md`](completed/07-the-bastion.md). It has three jobs.
 
-- **Sweep.** Read what each harness wrote, send what the service has not
-  seen, and return.
+- **Sweep.** `agentic-memory backfill` reads what each harness wrote and
+  sends what the service has not seen.
 - **Install.** Write a harness's own hook configuration, or a timer for
-  a harness that has none.
-- **Status.** Report what is unsent and whether the service answers.
+  a harness that has none. Not built.
+- **Status.** Report what is unsent and whether the service answers. Not
+  built.
 
 ### The shims and the SDK
 
@@ -211,9 +215,9 @@ path reuses it.
 
 ### The adapters
 
-One Go package per harness, and the adapter owns every harness-specific
-decision. An adapter answers two questions: which files on this machine
-belong to this harness, and what is in one of them.
+An adapter answers one question: which files on this machine belong to
+this harness. What is in one of them is read on the server, which holds
+the one reader for each format.
 
 The adapters serve the sweep and the backfill. The shims never use them.
 

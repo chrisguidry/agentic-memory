@@ -1,11 +1,13 @@
 /**
- * Asks the service what this person's earlier sessions said that is worth
+ * Asks the bastion what this person's earlier sessions said that is worth
  * having in front of a turn, and renders it as one block.
  *
  * The ask has a hard deadline. pi blocks the turn until the handler returns,
- * so a slow service would be a slow session, and a missing service, an empty
+ * so a slow bastion would be a slow session, and a missing bastion, an empty
  * scope, and a late answer all mean the same thing: no memory this turn.
  */
+
+import { post } from "./bastion";
 
 export interface Statement {
   id: number;
@@ -26,32 +28,15 @@ export interface Ask {
   limit: number;
 }
 
-/** The statements the service returns inside the deadline, or none. */
-export async function recall(
-  endpoint: string,
-  ask: Ask,
-  deadlineMs: number,
-): Promise<Statement[]> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), deadlineMs);
-  const authorization = process.env.AGENTIC_MEMORY_AUTHORIZATION;
+/** The statements the bastion returns inside the deadline, or none. */
+export async function recall(ask: Ask, deadlineMs: number): Promise<Statement[]> {
+  const response = await post("/recall", ask, deadlineMs);
+  if (response === undefined || response.status < 200 || response.status >= 300) return [];
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(authorization ? { authorization } : {}),
-      },
-      body: JSON.stringify(ask),
-      signal: controller.signal,
-    });
-    if (!response.ok) return [];
-    const found = (await response.json()) as { statements?: Statement[] };
+    const found = JSON.parse(response.body) as { statements?: Statement[] };
     return Array.isArray(found.statements) ? found.statements : [];
   } catch {
     return [];
-  } finally {
-    clearTimeout(timer);
   }
 }
 

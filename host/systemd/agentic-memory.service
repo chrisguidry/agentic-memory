@@ -1,0 +1,23 @@
+# The bastion: one process per person, holding the service's address and
+# authorization and one warm connection to the service. It takes the socket
+# from systemd as file descriptor 3.
+#
+# Write ~/.config/agentic-memory/environment with mode 0600:
+#
+#   AGENTIC_MEMORY_SERVICE=https://memory.example.test
+#   AGENTIC_MEMORY_AUTHORIZATION=Basic ...
+
+[Unit]
+Description=The agentic-memory bastion
+Requires=agentic-memory.socket
+After=agentic-memory.socket
+
+[Service]
+Type=exec
+ExecStart=%h/bin/agentic-memory bastion
+EnvironmentFile=%h/.config/agentic-memory/environment
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

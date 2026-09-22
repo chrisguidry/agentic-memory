@@ -32,6 +32,7 @@ from .db import store_pool
 from .merge import merge_statements
 from .otlp import walk
 from .settings import get_settings
+from .transcripts import Chunk, export
 
 log = logging.getLogger("agentic_memory")
 
@@ -114,6 +115,23 @@ async def logs(request: Request) -> dict:
     stored = await ingest.store(request.app.state.pool, arrived)
     await schedule(request.app.state.docket, worth_reading(stored.prompts))
     return {"partialSuccess": {}, **stored.counted}
+
+
+@app.post("/v1/transcripts")
+async def transcripts(request: Request, chunk: Chunk) -> dict:
+    """The endpoint a client posts transcript lines to.
+
+    The client sends bytes and never reads a format. The service parses the
+    lines with the harness's own reader and stores what they hold the same way
+    `/v1/logs` stores an export a client parsed for itself.
+    """
+    try:
+        arrived = list(walk(export(chunk)))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    stored = await ingest.store(request.app.state.pool, arrived)
+    await schedule(request.app.state.docket, worth_reading(stored.prompts))
+    return stored.counted
 
 
 @app.get("/records")

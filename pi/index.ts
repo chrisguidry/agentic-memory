@@ -1,5 +1,5 @@
 /**
- * Sends what pi records to an agentic-memory service as OTLP log records.
+ * Sends what pi records to the bastion's unix socket as OTLP log records.
  *
  * Capture happens here, at the hook, instead of by reading session files
  * afterwards. pi hands over each message in its own structure, so this
@@ -13,6 +13,7 @@ import { homedir, hostname } from "node:os";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { post } from "./bastion";
 import {
   kept,
   nanos,
@@ -29,24 +30,17 @@ import {
 import { scopeOf, type Scope } from "./scope";
 import { block, recall } from "./recall";
 
-const ENDPOINT =
-  process.env.AGENTIC_MEMORY_ENDPOINT ?? "http://127.0.0.1:4318/v1/logs";
-// The whole Authorization value, so a deployment behind a proxy can ask for
-// `Basic ...` or `Bearer ...` without the extension knowing which.
-const AUTHORIZATION = process.env.AGENTIC_MEMORY_AUTHORIZATION;
 const MACHINE = process.env.AGENTIC_MEMORY_MACHINE ?? hostname();
 const ENABLED = process.env.AGENTIC_MEMORY_DISABLED !== "1";
 
-// Recall is a second path with its own endpoint and its own deadline. It shares
-// nothing with capture: a batch being sent never delays a turn's ask, and an
-// ask never rides in a batch.
-const RECALL_ENDPOINT =
-  process.env.AGENTIC_MEMORY_RECALL_ENDPOINT ?? ENDPOINT.replace(/\/v1\/logs$/, "/recall");
+// Recall is a second path with its own deadline. It shares nothing with
+// capture: a batch being sent never delays a turn's ask, and an ask never
+// rides in a batch.
 const RECALL_LIMIT = Number(process.env.AGENTIC_MEMORY_RECALL_LIMIT ?? "10");
 const RECALL_ENABLED = process.env.AGENTIC_MEMORY_RECALL_DISABLED !== "1";
 // pi holds the turn until this handler returns, so the deadline is ours. Half
-// a second covers a service reached over a network; past it, the turn goes on
-// with no memory.
+// a second covers the bastion and the service behind it; past it, the turn
+// goes on with no memory.
 const RECALL_DEADLINE_MS = Number(
   process.env.AGENTIC_MEMORY_RECALL_DEADLINE_MS ?? "500",
 );
@@ -84,19 +78,9 @@ async function flush(): Promise<void> {
   if (pending.length === 0) return;
 
   const batch = pending.splice(0, pending.length);
-  try {
-    await fetch(ENDPOINT, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(AUTHORIZATION ? { authorization: AUTHORIZATION } : {}),
-      },
-      body: JSON.stringify(payload(MACHINE, batch)),
-      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-    });
-  } catch {
-    // A missing collector is ordinary, and it is never the harness's problem.
-  }
+  await post("/v1/logs", payload(MACHINE, batch), SEND_TIMEOUT_MS);
+  // A missing bastion is ordinary, and it is never the harness's problem;
+  // `post` already turned every way it can fail into `undefined`.
 }
 
 /** What describes the session, and is therefore on every record from it. */
@@ -329,7 +313,6 @@ export default function (pi: ExtensionAPI) {
     if (!RECALL_ENABLED || !(RECALL_LIMIT > 0)) return;
     try {
       const statements = await recall(
-        RECALL_ENDPOINT,
         {
           session_id: ctx.sessionManager.getSessionId(),
           harness: "pi",

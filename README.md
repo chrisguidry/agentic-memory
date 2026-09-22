@@ -17,12 +17,16 @@ call the worker makes.
 |---|---|---|
 | `server/` | Docker Compose | Receives OTLP on `/v1/logs`, writes it to Postgres, and answers recall |
 | `server/` (worker) | Docker Compose | Reads the record and calls the models, off the turn path |
-| `pi/` | A symlink into `~/.pi/agent/extensions/` | Sends each message as it happens, and asks for memory before each turn |
-| `tools/hook.py` | A Claude Code hook | Sends what a transcript gained on each event |
-| `tools/backfill.py` | The host, through `uv` | Reads the session files a harness already wrote |
-| `tools/harnesses/` | The host | One module per harness, which is the only place a format is read |
-| `tools/scope.py` | The host | Derives a session's scope from the directories it is in |
-| `docker-compose.yml` | The host | Postgres, Redis, the server, and the worker |
+| `server/src/agentic_memory/harnesses/` | Inside the server | One module per harness, which is the only place a format is read |
+| `agentic-memory bastion` | The machine, as a systemd user service | Holds the service's address and authorization, serves a unix socket, derives each session's scope, and ships what a transcript gained |
+| `agentic-memory claude` | A Claude Code hook | Hands the event to the socket and prints what comes back |
+| `agentic-memory backfill` | The machine | Asks the bastion to ship the session files a harness already wrote |
+| `agentic-memory top` | The machine | Watches what the memory loop is producing |
+| `pi/` | A symlink into `~/.pi/agent/extensions/` | Sends each message as it happens, and asks the socket for memory before each turn |
+| `docker-compose.yml` | The machine | Postgres, Redis, the server, and the worker |
+
+The four subcommands are one Go binary, built from [`host/`](host/), and
+[`host/README.md`](host/README.md) describes each of them.
 
 A transcript record is a log record. Its body holds the text, and its
 attributes hold the provenance. Every attribute name comes from
@@ -31,7 +35,7 @@ lists them with their sources.
 
 Each record carries a scope, which says what the session was about:
 `github.com/acme/widget` for a repository, `github.com/acme` for the
-organization above it. The client derives the scope from the directories
+organization above it. The bastion derives the scope from the directories
 the session is in, and [`plans/00-design.md`](plans/00-design.md) holds the
 scheme.
 
@@ -40,12 +44,6 @@ scheme.
 ```bash
 docker compose up -d --build          # Postgres, then the server
 docker compose logs -f server         # watch it work
-
-ln -sfn "$PWD/pi" ~/.pi/agent/extensions/agentic-memory
-
-uv run tools/backfill.py --harness pi
-uv run tools/backfill.py --harness claude-code
-uv run tools/backfill.py --harness codex
 ```
 
 The service listens on `127.0.0.1:4318`, which is the OTLP/HTTP port. The
@@ -55,6 +53,36 @@ source is mounted into the container and uvicorn reloads it, so an edit to
 ```bash
 curl -s http://127.0.0.1:4318/health
 curl -s "http://127.0.0.1:4318/records?scope=github.com/acme&limit=5"
+```
+
+Build the binary and start the bastion under systemd:
+
+```bash
+(cd host && go build -o ~/bin/agentic-memory .)
+
+cp host/systemd/agentic-memory.* ~/.config/systemd/user/
+systemctl --user enable --now agentic-memory.socket
+```
+
+The units read `~/.config/agentic-memory/environment`, which is mode 0600
+and holds the service's base URL, the header to send with it, and the
+recall settings. Nothing else on the machine holds them, and no client
+reads them. [`host/README.md`](host/README.md) lists every variable.
+
+systemd creates `$XDG_RUNTIME_DIR/agentic-memory.sock` with mode 0600 and
+hands it to the bastion as file descriptor 3, so the first client's
+connection starts the bastion. The kernel enforces who may connect, and
+nothing listens on the network.
+
+With the bastion up, wire up the extension and load what the harnesses
+already wrote:
+
+```bash
+ln -sfn "$PWD/pi" ~/.pi/agent/extensions/agentic-memory
+
+agentic-memory backfill --harness pi
+agentic-memory backfill --harness claude-code
+agentic-memory backfill --harness codex
 ```
 
 ## The image
@@ -85,33 +113,40 @@ lists the Secret's keys and shows an overlay that points at the base.
 
 ## Live capture from Claude Code
 
-`tools/hook.py` is a Claude Code hook. On `UserPromptSubmit`, `Stop`,
-`SubagentStop`, and `SessionEnd` it reads what the session's transcript
-gained since the last event and sends it through the same reader the
-backfill uses, so a record sent live and the same record swept later
-carry one entry id and the service keeps one copy.
+`agentic-memory claude` is a Claude Code hook. On `UserPromptSubmit`,
+`Stop`, `SubagentStop`, and `SessionEnd` it sends the event to the socket
+and prints what the bastion answers. The bastion then reads what the
+session's transcript gained since the last event and sends the lines to
+the service, which reads them with the same reader the backfill uses, so
+a record sent live and the same record swept later carry one entry id and
+the service keeps one copy.
 
-The foreground exits in under a tenth of a second and never writes to
-stdout, because a `UserPromptSubmit` hook's stdout goes into the
-conversation. The send runs in a detached process. Each transcript's byte
-offset, entry count, and head fingerprint live in one file under
-`~/.local/state/agentic-memory/claude-code/`, beside `hook.log`, which is
-the only place a failure is written. A transcript that shrinks or whose
-head changes is sent again from the start, and the service drops the
-repeats.
+The hook writes nothing to stdout but the recall block, because a
+`UserPromptSubmit` hook's stdout goes into the conversation. Its deadline
+is two seconds, so a wedged bastion cannot hold a turn, and it exits zero
+whatever happened. Each transcript's byte offset, entry count, and head
+fingerprint are kept in one file under
+`~/.local/state/agentic-memory/claude-code/`, and the bastion writes a
+failure to its journal. A transcript that shrinks or whose head changes
+is sent again from the start, and the service drops the repeats.
+
+The bastion answers the hook before it opens the transcript, so shipping
+never delays a turn. A file whose send failed stays in the bastion's
+memory and is retried until the service accepts it, and the offset
+advances only on a 2xx.
 
 Register it under each of the four events in `~/.claude/settings.json`:
 
 ```json
-{"type": "command", "command": "python3 /path/to/agentic-memory/tools/hook.py", "timeout": 5}
+{"type": "command", "command": "/home/someone/bin/agentic-memory claude", "timeout": 5}
 ```
 
 ## Recall into Claude Code
 
-`tools/recall.py` is the other half of the hook. On `UserPromptSubmit` it
-derives the scope from the working directory, sends the prompt and the
-scope to the service, and hands what comes back to the turn as context in
-the shape the hook docs specify. The pi extension does the same on
+Recall is the same hook. On `UserPromptSubmit` the bastion derives the
+scope from the working directory, sends the prompt and the scope to the
+service, and hands what comes back to the turn as context in the shape
+the hook docs specify. The pi extension asks the same socket on
 `before_agent_start`.
 
 What comes back has two forms, and the service picks between them. A
@@ -122,35 +157,28 @@ matches well enough. In both forms the service leaves out what it already
 handed this session. [`plans/completed/04-the-match.md`](plans/completed/04-the-match.md)
 holds the match.
 
-The deadline is half a second in all, counted from the interpreter's first
-line, and `AGENTIC_MEMORY_RECALL_DEADLINE_MS` sets it. Past it the turn
-proceeds with nothing. A missing service
-and a slow one look the same from the turn. Nothing but the block is ever
-written to stdout, because on this event stdout is context; failures go
-to `recall.log` beside the capture hook's state. The statements are given
-as the writer wrote them, one line each with kind, scope, who said it, and
-age, so the raw list can be watched landing.
+The bastion's deadline on the ask is half a second, and
+`AGENTIC_MEMORY_RECALL_DEADLINE_MS` sets it. Past it the turn proceeds
+with nothing. A missing service and a slow one look the same from the
+turn. Nothing but the block is ever written to stdout, because on this
+event stdout is context, and a failure goes to the bastion's journal. The
+statements are given as the writer wrote them, one line each with kind,
+scope, who said it, and age, so the raw list can be watched landing.
 
-Register it under `UserPromptSubmit` in `~/.claude/settings.json`. The
-`-S` matters: the whole budget is interpreter start.
-
-```json
-{"type": "command", "command": "python3 -S /path/to/agentic-memory/tools/recall.py", "timeout": 5}
-```
+The registration above is the whole of it. The same hook does both,
+because the bastion picks the work from the event.
 
 `AGENTIC_MEMORY_RECALL_LIMIT` caps how many statements a turn is handed,
-ten by default. `AGENTIC_MEMORY_RECALL_ENDPOINT` names the recall URL, and
-`AGENTIC_MEMORY_ENDPOINT` names the capture URL; a hook that sets only the
-latter uses it for both, which is what a local stack does. Either may be
-`http` or `https`, and `AGENTIC_MEMORY_AUTHORIZATION` is sent whole as the
-`Authorization` header when it is set, so a service behind a proxy can ask
-for `Basic ...` or `Bearer ...`.
+ten by default. It and the deadline are read by the bastion, from the
+environment file the systemd units name, so no shell that starts a
+harness holds any of the service's settings.
 
 ## What a backfill produces
 
-`tools/backfill.py` reads the session files a harness already wrote and
-sends them as OTLP log records. A run over several months of one machine's
-sessions produced records carrying:
+`agentic-memory backfill` finds the session files a harness already wrote
+and asks the bastion to ship each one, which the service stores as log
+records. A run over several months of one machine's sessions produced
+records carrying:
 
 - the session and the entry inside it, which make a re-send harmless
 - the scope, derived from the directory the session started in
@@ -178,11 +206,11 @@ hook already captured adds nothing.
 flows. [`plans/01-the-record.md`](plans/01-the-record.md) is the plan this
 code is a first cut of, at sketch fidelity.
 
-The plan's version differs from this proof of concept in three ways worth
-knowing. It sends records over OTLP from a Go client rather than from
-Python, it sweeps session files as a safety net rather than treating the
-backfill as a separate tool, and it reaches a harness through a shim rather
-than through a backfill that reads what the harness already wrote.
+The plan's version differs from what is built in two ways worth knowing.
+It sweeps session files on a timer as a safety net, rather than leaving
+the backfill to be run by hand, and it reaches every harness through a
+shim inside the harness. Claude Code is reached through a hook and the
+bastion instead, and pi is the one harness with a shim.
 
 The store keeps the record four ways: the export as it arrived, the unpacked
 log a query reads, and a table each for the resource and the scope that every

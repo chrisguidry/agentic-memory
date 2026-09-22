@@ -1,0 +1,15 @@
+# The socket the bastion serves. systemd creates it, so the first client's
+# connection starts the bastion, and the mode is what keeps other users out.
+#
+#   cp agentic-memory.* ~/.config/systemd/user/
+#   systemctl --user enable --now agentic-memory.socket
+
+[Unit]
+Description=The agentic-memory socket
+
+[Socket]
+ListenStream=%t/agentic-memory.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
