@@ -29,7 +29,7 @@ jobs:
   # the version is computed once here and read by both jobs as an output,
   # rather than each job re-deriving it and risking the two disagreeing.
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
@@ -66,7 +66,7 @@ jobs:
 
   image:
     needs: [test, version]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
       RELEASE: ${{ needs.version.outputs.release }}
@@ -106,7 +106,7 @@ jobs:
 
   host:
     needs: [test, version]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     env:
