@@ -148,7 +148,7 @@ class TestStanding:
     async def test_the_scope_the_kinds_the_moment_and_the_cap_go_to_the_query(self):
         pool = FakePool()
         await standing(pool, scope_key="github.com/liken-sh", kinds=["correction"], said_before=NOW)
-        assert pool.asked == [("github.com/liken-sh", ["correction"], NOW, CANDIDATES)]
+        assert pool.asked == [("github.com/liken-sh", NOW, ["correction"], CANDIDATES)]
 
     async def test_the_statements_come_back_as_plain_dicts(self):
         pool = FakePool(rows=[statement()])
@@ -175,10 +175,10 @@ class TestStanding:
 
 
 class TestMemories:
-    async def test_the_read_is_narrowed_to_the_scope(self):
+    async def test_the_read_is_narrowed_to_the_scope_and_the_moment(self):
         pool = FakePool()
-        await memories(pool, scope_key="github.com/liken-sh")
-        assert pool.asked == [("github.com/liken-sh",)]
+        await memories(pool, scope_key="github.com/liken-sh", now=NOW)
+        assert pool.asked == [("github.com/liken-sh", NOW)]
 
     async def test_the_limit_is_applied_after_the_ranking(self):
         pool = FakePool(
@@ -206,8 +206,8 @@ class TestMemories:
 
     async def test_the_newest_order_is_narrowed_to_the_scope_too(self):
         pool = FakePool()
-        await memories(pool, scope_key="github.com/liken-sh", order="newest")
-        assert pool.asked == [("github.com/liken-sh",)]
+        await memories(pool, scope_key="github.com/liken-sh", order="newest", now=NOW)
+        assert pool.asked == [("github.com/liken-sh", NOW)]
 
     async def test_every_row_carries_a_rank_in_both_orders(self):
         # A reader that shows the two lists together needs to tell them apart.

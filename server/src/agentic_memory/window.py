@@ -7,6 +7,7 @@ it. The two halves are kept apart, because the questions judge the message and
 only use the rest to read it.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -15,13 +16,14 @@ import asyncpg
 
 # Entries a harness writes for itself rather than from the conversation. Claude
 # Code and pi both record injected skill text, command wrappers, interrupt
-# markers, compaction summaries, and hook output as though the person had typed
+# markers, compaction summaries, hook output, a Stop hook's goal and its
+# check-ins, and messages from other sessions as though the person had typed
 # them, which is a third of everything stored as a prompt and none of what the
 # person wanted. A compaction summary is the worst of these to let through: it
 # is a page of the agent's own words about the whole session, and read as the
 # person's it would put a preference on every sentence in it.
 #
-# The list is kept once, here, and the SQL below is built from it, so the
+# The lists are kept once, here, and the SQL below is built from them, so the
 # scheduler at the door and the queries that read the record cannot disagree
 # about what the person said.
 PLUMBING_PREFIXES = (
@@ -30,9 +32,25 @@ PLUMBING_PREFIXES = (
     "Base directory for this skill",
     "This session is being continued from a previous conversation",
     "Stop hook feedback:",
+    "A session-scoped Stop hook is now active",
+    "Goal check-in:",
+    "Another Claude session sent a message:",
+    "Continue from where you left off.",
+    "(Re-invocation of /",
 )
+
+# Entries that are plumbing only when they are the whole prompt: a bare slash
+# command, and a prompt of nothing but image references. The same text with the
+# person's words beside it is the person. Each pattern is written in the syntax
+# Python and Postgres read the same way, because both match it.
+PLUMBING_WHOLE = (
+    r"/[\w:.-]+",
+    r"(\[Image[^]]*\]\s*)+",
+)
+WHOLE = "|".join(PLUMBING_WHOLE)
 NOT_PLUMBING = " AND ".join(
-    f"btrim(body) NOT LIKE '{prefix.replace("'", "''")}%'" for prefix in PLUMBING_PREFIXES
+    [f"btrim(body) NOT LIKE '{prefix.replace("'", "''")}%'" for prefix in PLUMBING_PREFIXES]
+    + [f"body !~ '^\\s*({WHOLE})\\s*$'"]
 )
 
 # The prompt being read, and where it happened. A prompt with no entry id of
@@ -112,7 +130,9 @@ class Window:
 
 def plumbing(body: str) -> bool:
     """Whether a harness wrote this entry for itself rather than the person."""
-    return body.lstrip().startswith(PLUMBING_PREFIXES)
+    return body.lstrip().startswith(PLUMBING_PREFIXES) or bool(
+        re.fullmatch(rf"\s*({WHOLE})\s*", body)
+    )
 
 
 def spoken(rows: Sequence[Any]) -> str:

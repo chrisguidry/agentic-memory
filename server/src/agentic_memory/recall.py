@@ -59,7 +59,7 @@ UNSEEN = f"""
     SELECT id, statement, kind, score, scope_key, session_id, entry_id,
            model, said_at, created_at, actor, actor_depth
     FROM memories
-    WHERE {live_at("$3")}
+    WHERE {live_at("$3", "$4")}
       AND scope_key IS NOT NULL
       AND (scope_key = $1 OR starts_with($1, scope_key || '/'))
       AND NOT (id = ANY($2::bigint[]))
@@ -112,10 +112,11 @@ async def opening(
     limit: int,
     now: datetime,
     as_of: datetime | None = None,
+    by_said_at: bool = False,
 ) -> list[dict]:
     """The top of the scope's list at a moment, less what the session saw."""
     with phase("opening"):
-        found = await pool.fetch(UNSEEN, scope_key, list(seen), as_of)
+        found = await pool.fetch(UNSEEN, scope_key, list(seen), as_of, by_said_at)
     return ranked((dict(row) for row in found), now)[: min(limit, LIMIT)]
 
 
@@ -129,12 +130,14 @@ async def choose(
     prompt: str,
     now: datetime,
     as_of: datetime | None = None,
+    by_said_at: bool = False,
 ) -> Handout:
     """What a turn is handed, chosen with nothing recorded.
 
     `now` is the moment the statements are aged to, and `as_of` is the moment
     the table is read at. A live turn reads the table as it is. A replay reads
-    it as it stood when the prompt was said.
+    it as it stood when the prompt was said, or, with `by_said_at`, as it is
+    now with each statement placed at the moment its message was said.
 
     A short prompt whose nearest readings mostly held no memory is handed
     nothing, the opening list included, so a session that opens with a reply gets its
@@ -160,6 +163,7 @@ async def choose(
             actionable=settings.recall_actionable,
             now=now,
             as_of=as_of,
+            by_said_at=by_said_at,
         )
     if form == "match":
         return Handout(form, matched)
@@ -170,6 +174,7 @@ async def choose(
         limit=settings.recall_opening_limit,
         now=now,
         as_of=as_of,
+        by_said_at=by_said_at,
     )
     return Handout(form, matched + listed)
 

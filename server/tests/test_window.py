@@ -6,6 +6,8 @@ cut has to keep the message, which is what is judged, and give up the
 exchanges before it first.
 """
 
+import pytest
+
 from agentic_memory.window import Window, plumbing, spoken
 
 
@@ -28,8 +30,45 @@ class TestPlumbing:
     def test_feedback_from_a_stop_hook_is_not_the_person(self):
         assert plumbing("Stop hook feedback:\n[a hook said something]")
 
+    def test_a_stop_hook_being_set_is_not_the_person(self):
+        # The harness writes the condition the person gave the hook, so the
+        # person's words are inside it, and read as a prompt it is the same
+        # goal again on every turn the hook fires.
+        assert plumbing(
+            'A session-scoped Stop hook is now active with condition: "keep going until '
+            'the widget tests pass". Briefly acknowledge the goal.'
+        )
+
+    def test_a_goal_check_in_is_not_the_person(self):
+        assert plumbing("Goal check-in: «keep going until the widget tests pass» is still active")
+
     def test_what_the_person_typed_is_the_person(self):
         assert not plumbing("why is the dedup key on the repo revision?")
+
+
+# Each is the shape a harness writes, with invented content. A slash command or
+# an image reference with the person's own words beside it is the person.
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("/compact", True),
+        ("/clear", True),
+        ("  /widget:release  \n", True),
+        ("/compact keep the notes about the widget release", False),
+        ("[Image #3]", True),
+        ("[Image: source: /home/someone/Pictures/widget.png]", True),
+        ("[Image #1]\n[Image: source: /tmp/widget.png]", True),
+        ("[Image #2] the widget's panel is blank after the release", False),
+        ("Another Claude session sent a message:\nthe widget build is green", True),
+        ("Continue from where you left off.", True),
+        ("(Re-invocation of /widget-release with the same arguments)", True),
+        ('A session-scoped Stop hook is now active with condition: "ship the widget"', True),
+        ("Goal check-in: «ship the widget» is still active", True),
+        ("continue with the widget release", False),
+    ],
+)
+def test_what_a_harness_writes_as_a_prompt_is_plumbing(body, expected):
+    assert plumbing(body) == expected
 
 
 def said(occurred_at: int, kind: str, body: str) -> dict:

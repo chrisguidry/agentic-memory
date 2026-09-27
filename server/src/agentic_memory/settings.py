@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -33,6 +34,13 @@ class Settings(BaseSettings):
     # part that needs judgment, and it runs on a fraction of the messages.
     deepinfra_api_key: str = Field("", validation_alias="DEEPINFRA_API_KEY")
     synthesize_model: str = "deepseek-ai/DeepSeek-V4.1-Flash"
+
+    # The person's time zone, as an IANA name such as America/New_York. The
+    # writer is told when a message was said in this zone, so "tomorrow
+    # morning" and "Monday" end a commitment at the person's morning and not at
+    # UTC's. The record carries no zone for the person, so this is UTC until it
+    # is set, and a name that is not a zone is refused at startup.
+    time_zone: ZoneInfo = ZoneInfo("UTC")
 
     # How many exchanges of a session go into the window. A reply means
     # something next to what it replies to, so the window holds both sides.

@@ -22,7 +22,7 @@ from typesafe_sdk import Noul, TypeSafeBadRequestError
 from .classify import recorded_model_client
 from .db import store_pool
 from .ledger import RecordedSystemOne, calling
-from .memories import retire
+from .memories import live, retire
 from .settings import Settings, get_settings
 
 log = logging.getLogger("agentic_memory.merge")
@@ -54,12 +54,14 @@ YES = 0.5
 
 # One live statement embedded with the model being compared, with its kind, its
 # scope, and the moment it was said. A statement with no moment cannot be placed
-# in order, so it is never merged.
-SUBJECT = """
+# in order, so it is never merged. A commitment past its moment has ended, so it
+# neither merges nor survives a merge.
+SUBJECT = f"""
     SELECT id, statement, kind, scope_key, said_at, session_id, entry_id
     FROM memories
     WHERE id = $1
-      AND superseded_by IS NULL
+      AND {live()}
+      AND (until_moment IS NULL OR until_moment > now())
       AND embedding IS NOT NULL
       AND embedding_model = $2
       AND said_at IS NOT NULL
@@ -70,12 +72,13 @@ SUBJECT = """
 # is its own scope, because "tests come before code" in one project and in
 # another are one rule stated twice and merging them would move where the rule
 # applies.
-NEIGHBOURS = """
+NEIGHBOURS = f"""
     SELECT m.id, m.statement, m.kind, m.scope_key, m.said_at,
            1 - (m.embedding <=> s.embedding) AS similarity
     FROM memories m
     JOIN memories s ON s.id = $1
-    WHERE m.superseded_by IS NULL
+    WHERE {live("m")}
+      AND (m.until_moment IS NULL OR m.until_moment > now())
       AND m.id <> $1
       AND m.kind = $2
       AND m.scope_key IS NOT DISTINCT FROM $3
@@ -88,10 +91,10 @@ NEIGHBOURS = """
 # Every live statement of this model that could still be merged, oldest first.
 # Oldest first means that when a group is reached, its newest statement is the
 # survivor, and the older ones retire into it.
-BACKLOG = """
+BACKLOG = f"""
     SELECT m.id
     FROM memories m
-    WHERE m.superseded_by IS NULL
+    WHERE {live("m")}
       AND m.embedding IS NOT NULL
       AND m.embedding_model = $1
       AND m.said_at IS NOT NULL
@@ -174,12 +177,12 @@ async def merge(
 # The live statements one message wrote, which is what a write merges after it
 # embeds them. The model is the one being compared, so a statement embedded
 # before a model change is not merged until it is embedded again.
-WRITTEN = """
+WRITTEN = f"""
     SELECT m.id
     FROM memories m
     WHERE m.session_id = $1
       AND m.entry_id = $2
-      AND m.superseded_by IS NULL
+      AND {live("m")}
       AND m.embedding IS NOT NULL
       AND m.embedding_model = $3
     ORDER BY m.id

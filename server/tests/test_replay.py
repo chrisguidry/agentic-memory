@@ -59,19 +59,28 @@ async def held(
     statement: str,
     created: datetime,
     retired: datetime | None = None,
+    said_at: datetime | None = None,
+    until_moment: datetime | None = None,
 ) -> int:
-    """One statement, written at a moment and retired at another."""
+    """One statement, written at a moment and retired at another.
+
+    The message it came from was said when it was written, unless `said_at`
+    says otherwise, which is how a re-read writes a statement long after its
+    message.
+    """
     found = await store.fetchval(
         """
         INSERT INTO memories
             (statement, kind, score, scope_key, session_id, entry_id, model,
-             questions_fingerprint, said_at, created_at, actor, actor_depth)
-        VALUES ($1, 'preference', 0.9, $2, 's0', $1, 'jev-1.13.0', 'fp', $3, $3, 'human', 0)
+             questions_fingerprint, said_at, created_at, until_moment, actor, actor_depth)
+        VALUES ($1, 'preference', 0.9, $2, 's0', $1, 'jev-1.13.0', 'fp', $3, $4, $5, 'human', 0)
         RETURNING id
         """,
         statement,
         SCOPE,
+        said_at or created,
         created,
+        until_moment,
     )
     if retired is not None:
         await store.execute(
@@ -89,9 +98,10 @@ async def replayed(
     as_of: datetime = LATER,
     settings: Settings | None = None,
     excluded: tuple[str, ...] = (),
+    by_said_at: bool = False,
 ):
     found = await prompts(store, since=MONDAY, until=until, as_of=as_of, excluded=excluded)
-    return await replay(store, embedder, settings or Settings(), found)
+    return await replay(store, embedder, settings or Settings(), found, by_said_at=by_said_at)
 
 
 def handed(turn) -> list[str]:
@@ -128,11 +138,19 @@ async def test_a_replay_writes_no_injection(week, embedder):
         "<task-notification>a background task finished</task-notification>",
         "Base directory for this skill: /somewhere",
         "[Request interrupted by user]",
+        "Goal check-in: «keep going until the widget tests pass» is still active",
+        "/compact",
+        "[Image #3]",
     ],
 )
 async def test_an_entry_the_harness_wrote_is_not_replayed(store, embedder, body):
     await said(store, "a", "a1", body, MONDAY)
     assert await replayed(store, embedder) == []
+
+
+async def test_an_image_with_the_persons_words_is_replayed(store, embedder):
+    await said(store, "a", "a1", "[Image #2] the widget panel is blank", MONDAY)
+    assert [turn.prompt.entry_id for turn in await replayed(store, embedder)] == ["a1"]
 
 
 async def test_a_prompt_after_the_range_is_not_replayed(week, embedder):
@@ -179,6 +197,51 @@ async def test_a_prompt_is_handed_what_was_live_when_it_was_said(
     await said(store, "a", "a1", "start", MONDAY)
     [turn] = await replayed(store, embedder)
     assert handed(turn) == expected
+
+
+async def test_a_commitment_is_handed_until_its_moment(store, embedder):
+    await held(
+        store, "the hold", MONDAY - timedelta(days=1), until_moment=MONDAY + timedelta(days=1)
+    )
+    await said(store, "a", "a1", "start", MONDAY)
+    await said(store, "b", "b1", "start", MONDAY + timedelta(days=2))
+    before, after = await replayed(store, embedder)
+    assert (handed(before), handed(after)) == (["the hold"], [])
+
+
+# A re-read writes its statements after the week it replays. Read as the store
+# stood at each prompt, the replay would hand out none of them, so this mode
+# reads the store as it is and places each statement at its message's moment.
+@pytest.mark.parametrize(
+    "said_at, created, retired, expected",
+    [
+        (MONDAY - timedelta(days=1), LATER, None, ["the rule"]),
+        (MONDAY + timedelta(days=1), LATER, None, []),
+        (MONDAY - timedelta(days=1), MONDAY - timedelta(days=1), MONDAY + timedelta(days=1), []),
+    ],
+    ids=["said-before-written-after", "said-after", "retired-since"],
+)
+async def test_reading_by_said_at_places_each_statement_at_its_message(
+    store, embedder, said_at, created, retired, expected
+):
+    await held(store, "the rule", created, retired, said_at=said_at)
+    await said(store, "a", "a1", "start", MONDAY)
+    [turn] = await replayed(store, embedder, by_said_at=True)
+    assert handed(turn) == expected
+
+
+async def test_reading_by_said_at_still_ends_a_commitment_at_its_moment(store, embedder):
+    await held(
+        store,
+        "the hold",
+        LATER,
+        said_at=MONDAY - timedelta(days=1),
+        until_moment=MONDAY + timedelta(days=1),
+    )
+    await said(store, "a", "a1", "start", MONDAY)
+    await said(store, "b", "b1", "start", MONDAY + timedelta(days=2))
+    before, after = await replayed(store, embedder, by_said_at=True)
+    assert (handed(before), handed(after)) == (["the hold"], [])
 
 
 @pytest.fixture
@@ -250,3 +313,17 @@ async def test_the_command_leaves_out_an_excluded_scope(week, postgres_url):
         ]
     )
     assert "turns                   0" in (await run(arguments)).splitlines()
+
+
+async def test_the_command_reads_by_said_at_when_asked(week, postgres_url):
+    arguments = parser().parse_args(
+        [
+            "--since=2026-09-21",
+            "--until=2026-09-28",
+            f"--as-of={LATER.isoformat()}",
+            f"--database-url={postgres_url}",
+            "--by-said-at",
+        ]
+    )
+    assert arguments.by_said_at
+    assert "turns                   3" in (await run(arguments)).splitlines()

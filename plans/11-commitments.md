@@ -36,19 +36,30 @@ catches today goes somewhere definite.
 | a decision | prospective | semantic or procedural |
 | the state of the work | prospective | nothing |
 
-### The questions
+### The sort
 
-The prospective question asks whether the message commits the speakers to
-do or not do something until a condition holds: a date, an event, or a
-person's word. The state of the work is named in its criteria as a no.
+The classifier's prospective question stays as it is. It catches decisions,
+commitments, and the state of the work, and it catches them well. What goes
+wrong is that everything it catches is written as prospective.
 
-The semantic and procedural questions name a decision in their criteria as
-a yes, so a message that settles a design is still read.
+So each prospective statement is sorted after the writer writes it, by one
+yes-or-no question to Jev per class, asked about the statement and the
+exchange it came from:
+
+- Does the statement hold until someone changes it? A yes is a decision, and
+  the statement is written as semantic or procedural.
+- Is the statement only the state of the work, such as uncommitted files or a
+  build waiting on CI? A yes ends the statement.
+- What is left is a commitment, and Jev is asked whether it ends at a moment,
+  and at which one, or on an event.
+
+Jev answers one proposition at a time, and the classifier and the merge show
+it does that reliably. The sort then does not depend on the writer following
+a format.
 
 ### The condition
 
-When the writer writes a prospective statement, it also writes the
-condition that ends it, in the same call. A condition is one of two forms:
+A condition is one of two forms:
 
 - **a moment**: the statement ends when the moment passes
 - **an event**: the statement ends when a later message reports it
@@ -58,6 +69,9 @@ happening. A statement whose condition is an event ends through the path
 plan 03 built for replacement: when the writer writes from a later message
 in the same scope, the live commitments of the scope are offered to it, and
 it names any whose condition the message meets.
+
+A moment is said in the person's time zone, which is a setting, so "the
+morning" resolves where the person is.
 
 ### Ending without a survivor
 
@@ -73,8 +87,8 @@ the same as one that was replaced.
 - `memories` gains the end of a statement without a successor, with its
   reason, and the live index and every read treat an ended statement as
   retired.
-- The new questions have a new fingerprint, so their readings and their
-  statements are written beside the old ones. Plan 12 runs the re-read.
+- The classifier's questions do not change, so no re-read is forced by this
+  plan.
 
 ## What it does not do
 
@@ -87,13 +101,39 @@ the same as one that was replaced.
 
 - A labelled set of prospective statements from the last week, sorted by
   hand into commitment, decision, and state of the work, with invented
-  wording in the fixtures. The new questions put each one where the table
-  says, and the drill records the share that land right.
+  wording in the fixtures. The sort puts each one where the table says, and
+  the drill records the share that land right.
 - A commitment with a moment is absent from reads after the moment.
 - A commitment with an event is ended by a later message that reports the
   event, and is not ended by one that does not.
 - The replay under plan 08 shows prospective's share of new statements
   over the same week, before and after.
+
+## What is built
+
+The columns for a condition and for an end without a successor, the read
+that leaves out a statement past its moment, the time zone setting, and the
+replay mode that reads the store as it is now are built and released. So is
+a wider plumbing filter: Stop-hook feedback, goal check-ins, messages from
+another session, bare slash commands, and prompts that are only images are
+no longer read as the person's prompts. Nothing fills the condition yet.
+
+## What was tried
+
+Two sorts were measured on 80 prospective statements from a week of real
+work, sorted by hand into 9 commitments, 42 decisions, and 29 statements of
+the state of the work.
+
+Narrowing the classifier's questions landed 40 of the 80 where the table
+puts them, and lost 17 of the decisions and 6 of the commitments outright.
+The classifier judges one message, and a decision often scores just below
+the semantic and procedural thresholds.
+
+Asking the writer to name a sort before its sentence landed 34 of the 80.
+In 23 replies the writer gave no sort, or gave it as a kind, and more
+wording over four rounds did not change that. When it did give a sort, it
+named 5 of 7 commitments, 18 of 30 decisions, and 3 of 20 statements of
+the state of the work.
 
 ## Open questions
 

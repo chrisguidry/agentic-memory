@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "pydocket>=0.25",
     "typesafe-sdk>=0.7",
+    "tzdata>=2025.2",
     "uvicorn[standard]>=0.32",
 ]
 

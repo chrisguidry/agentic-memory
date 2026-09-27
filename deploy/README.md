@@ -26,6 +26,15 @@ kubectl -n agentic-memory create secret generic agentic-memory \
   --from-literal=DEEPINFRA_API_KEY=...
 ```
 
+## The person's time zone
+
+`AGENTIC_MEMORY_TIME_ZONE` in the ConfigMap is the person's time zone, as an
+IANA name such as `America/New_York`. The writer is told when each message was
+said in this zone, so a commitment "until tomorrow morning" ends at the
+person's morning. The record holds no zone for the person, so the base sets
+UTC, and an overlay patches it to the person's zone. The service refuses to
+start with a name that is not a zone.
+
 ## Pointing an overlay at this base
 
 A consumer names a full commit, not a branch, so a deploy is the same

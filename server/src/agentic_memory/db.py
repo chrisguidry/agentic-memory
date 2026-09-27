@@ -12,6 +12,8 @@ from typing import Any
 
 import asyncpg
 
+from .memories import live
+
 log = logging.getLogger("agentic_memory")
 
 
@@ -73,15 +75,15 @@ async def count(pool: asyncpg.Pool) -> dict[str, int]:
     return dict(found)
 
 
-METRICS = """
+METRICS = f"""
     SELECT (SELECT count(*) FROM otel_exports)                                 AS exports,
            (SELECT count(*) FROM otel_exports WHERE unpacked_at IS NULL)       AS pending,
            (SELECT count(*) FROM logs)                                         AS logs,
            (SELECT count(*) FROM resources)                                    AS resources,
            (SELECT count(*) FROM scopes)                                       AS scopes,
            (SELECT count(*) FROM classifications)                              AS classifications,
-           (SELECT count(*) FROM memories WHERE superseded_by IS NULL)         AS memories_live,
-           (SELECT count(*) FROM memories WHERE superseded_by IS NOT NULL)     AS memories_retired
+           (SELECT count(*) FROM memories WHERE {live()})                      AS memories_live,
+           (SELECT count(*) FROM memories WHERE NOT ({live()}))                AS memories_retired
 """
 
 

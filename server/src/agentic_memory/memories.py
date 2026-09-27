@@ -1,18 +1,19 @@
 """What a statement means once it has been written.
 
 The writer fills the table. This says what a statement is worth reading now,
-and how a statement leaves the list when a newer one replaces it.
+and how a statement leaves the list: a newer one replaces it, or it ends with
+nothing to replace it.
 
 A statement is retired rather than deleted or edited. The statement that
-replaced it is named on the row, so a question about the past still has an
-answer, and the chain of replacements is the reason the service believes what
-it believes.
+replaced it is named on the row, or the reason it ended, so a question about
+the past still has an answer, and the chain of replacements is the reason the
+service believes what it believes.
 """
 
 import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import asyncpg
 
@@ -50,6 +51,19 @@ UNRANKED = (0.1, 90.0, 0.0)
 # silence.
 CANDIDATES = 40
 
+
+def live(table: str = "") -> str:
+    """The predicate for a statement that is live now: not replaced and not ended.
+
+    The partial indexes hold only these rows, and Postgres uses a partial index
+    only for a query that repeats its predicate, so every query over the live
+    statements builds it here. `table` is the alias of a query that joins the
+    table to itself.
+    """
+    prefix = f"{table}." if table else ""
+    return f"{prefix}superseded_by IS NULL AND {prefix}ended_at IS NULL"
+
+
 # A statement and everything above it. The scope is a path, so a statement about
 # an organization is reachable from a repository inside it, and a statement with
 # no scope is reachable from everywhere.
@@ -62,11 +76,15 @@ CANDIDATES = 40
 # comes from the kind and the age and Postgres has neither number. A slice is
 # hundreds of rows, so the sort is cheap, and a slice that stops being cheap wants
 # the rank kept as a column.
-REACHABLE = """
+#
+# `$2` is the moment the read is for. A commitment whose moment is at or before
+# it has ended, and nothing had to be written for that to be true.
+REACHABLE = f"""
     SELECT id, statement, kind, score, scope_key, session_id, entry_id,
-           model, said_at, created_at, actor, actor_depth
+           model, said_at, created_at, actor, actor_depth, until_moment, until_event
     FROM memories
-    WHERE superseded_by IS NULL
+    WHERE {live()}
+      AND (until_moment IS NULL OR until_moment > $2)
       AND ($1::text IS NULL
            OR scope_key IS NULL
            OR scope_key = $1
@@ -74,18 +92,30 @@ REACHABLE = """
 """
 
 
-def live_at(moment: str) -> str:
+def live_at(moment: str, by_said_at: str) -> str:
     """The predicate for a statement that was live at a moment.
 
     `moment` names the query parameter that holds the moment, and a null
     moment reads the table as it is. A moment in the past is how a replay reads
     the table as it stood then: a statement written later was not there yet,
-    and one retired later was still live.
+    and one retired or ended later was still live.
+
+    `by_said_at` names a boolean parameter that reads the table as it is now
+    instead, with each statement placed at the moment its message was said. A
+    re-read writes statements after the messages it reads, and read as the
+    table stood, none of them were there yet.
+
+    A commitment ends when its moment passes, which is read from the row and
+    written nowhere, so it is compared with the moment of the read, or with the
+    clock of the store when the read is for now.
     """
-    return (
-        f"(superseded_by IS NULL OR superseded_at > {moment})"
-        f" AND ({moment}::timestamptz IS NULL OR created_at <= {moment})"
-    )
+    return f"""(CASE WHEN {by_said_at}::boolean
+             THEN {live()} AND said_at <= {moment}
+             ELSE (superseded_by IS NULL OR superseded_at > {moment})
+                  AND (ended_at IS NULL OR ended_at > {moment})
+                  AND ({moment}::timestamptz IS NULL OR created_at <= {moment})
+           END)
+      AND (until_moment IS NULL OR until_moment > coalesce({moment}, now()))"""
 
 
 # The statements a message could replace: the live ones reachable from where it
@@ -93,22 +123,35 @@ def live_at(moment: str) -> str:
 #
 # A statement can only be retired by a message that came after the one it was
 # written from. Without that rule, a re-read of last year, which writes old
-# statements today, could retire a statement written from this morning.
+# statements today, could retire a statement written from this morning. The
+# moment of the read is the message's, so a commitment that had ended by then
+# is not offered.
 STANDING = (
     REACHABLE
     + """
-      AND kind = ANY($2::text[])
+      AND kind = ANY($3::text[])
       AND said_at IS NOT NULL
-      AND said_at < $3
+      AND said_at < $2
     ORDER BY said_at DESC
     LIMIT $4
 """
 )
 
-RETIRE = """
+RETIRE = f"""
     UPDATE memories
     SET superseded_by = $2, superseded_at = $3
-    WHERE id = $1 AND superseded_by IS NULL
+    WHERE id = $1 AND {live()}
+"""
+
+# Why a statement ended with nothing to replace it. `event` is a later message
+# that met a commitment's condition. `reread` is a statement that a read of the
+# record under new questions did not write again.
+Ending = Literal["event", "reread"]
+
+END = f"""
+    UPDATE memories
+    SET ended_at = $2, ended_reason = $3, ended_by_session_id = $4, ended_by_entry_id = $5
+    WHERE id = $1 AND {live()}
 """
 
 
@@ -176,7 +219,7 @@ async def standing(
     if said_before is None:
         log.info("no time for the message, so nothing is offered to a message in %s", scope_key)
         return []
-    found = await pool.fetch(STANDING, scope_key, list(kinds), said_before, limit)
+    found = await pool.fetch(STANDING, scope_key, said_before, list(kinds), limit)
     if len(found) == limit:
         log.info(
             "offered %s statements to replace in %s, and older ones were not offered",
@@ -205,8 +248,9 @@ async def memories(
     seen arriving. Every row has its rank either way, so a reader can tell the
     two orders apart.
     """
-    found = await pool.fetch(REACHABLE, scope_key)
-    return ORDERINGS[order]((dict(row) for row in found), now)[:limit]
+    moment = now or datetime.now(UTC)
+    found = await pool.fetch(REACHABLE, scope_key, moment)
+    return ORDERINGS[order]((dict(row) for row in found), moment)[:limit]
 
 
 async def retire(
@@ -232,3 +276,27 @@ async def retire(
         if result.endswith(" 1"):
             ended.append(statement_id)
     return ended
+
+
+async def end(
+    pool: asyncpg.Pool,
+    *,
+    ended: Iterable[int],
+    reason: Ending,
+    message: tuple[str, str] | None = None,
+    now: datetime | None = None,
+) -> list[int]:
+    """End statements that nothing replaces, and say which ones ended.
+
+    `message` is the session and entry of the message that met the condition,
+    when a message did. The moment recorded is when the service learned the
+    statement ended, as it is for a replacement.
+    """
+    moment = now or datetime.now(UTC)
+    session_id, entry_id = message or (None, None)
+    finished = []
+    for statement_id in ended:
+        result = await pool.execute(END, statement_id, moment, reason, session_id, entry_id)
+        if result.endswith(" 1"):
+            finished.append(statement_id)
+    return finished

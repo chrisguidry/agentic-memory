@@ -12,7 +12,9 @@ the old statements instead of over them.
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import asyncpg
 import httpx
@@ -30,6 +32,7 @@ from .embed import Embedder, embed_message, shared_embedder
 from .ledger import RecordedCompletions, RecordedSystemOne, calling
 from .memories import retire, standing
 from .merge import merge_message
+from .replacing import CORRECTS_EARLIER, candidates_block, offered_numbers
 from .settings import Settings, get_settings
 
 log = logging.getLogger("agentic_memory.synthesize")
@@ -51,14 +54,6 @@ THRESHOLDS: dict[str, float] = {
     "correction": 0.70,
     "praise": 0.80,
 }
-
-# How sure the reading has to be that a message pushes back on something before
-# the statements already held about the place are put in front of the writer.
-# Measured over 376 readings, this question and the correction kind together
-# qualify 35 of them, which is about one message in eleven. Everything else
-# writes without any candidates, so the comparison against the table costs
-# nothing on the messages that cannot replace anything.
-CORRECTS_EARLIER = 0.70
 
 # The reading for one message, with the state it judged and every score.
 READING = f"""
@@ -161,6 +156,8 @@ Rules:
 
 INSTRUCTIONS = """Scope: {scope}
 
+The message was said at {said}.
+
 The exchanges leading up to the message, oldest first:
 
 <before>
@@ -185,18 +182,6 @@ EXTRA = """
 Two more things were found, and they steer the sentences rather than decide
 anything about them:
 {notes}
-"""
-
-STANDING = """
-The statements this place already holds, by number:
-
-{standing}
-
-If the message replaces any of them, name those numbers in "replaces" on the
-statement doing the replacing. A statement replaces another when the two cannot
-both be true, or when the new one settles a question the old one left open.
-Adding a fact, an opinion, or a detail to one of them replaces nothing, and
-naming a number ends the statement for good.
 """
 
 
@@ -240,44 +225,19 @@ def pushes_back(reading: Any) -> bool:
     )
 
 
-def offered_numbers(
-    sentence: dict[str, Any],
-    candidates: dict[int, dict[str, Any]],
-) -> list[int]:
-    """The statements a sentence says it replaces, by their ids.
+def said_line(said_at: datetime | None, zone: ZoneInfo) -> str:
+    """When a message was said, in the person's zone, with the day of the week.
 
-    A model answers with numbers and with the numbers as text, so both are read.
-    A number that was never offered is dropped, because the model can only end a
-    statement that was put in front of it, and dropping it is logged so a
-    replacement that did not happen is never silent.
+    A message that says "tomorrow morning" or "Monday" names a moment only to a
+    reader who knows the day it was said and the person's zone. The zone's name
+    is given when its abbreviation is not the name.
     """
-    named = sentence.get("replaces")
-    if not isinstance(named, list):
-        return []
-    numbers = []
-    for entry in named:
-        try:
-            number = int(entry)
-        except TypeError, ValueError:
-            log.warning("the writer named %r as a replacement, which is not a number", entry)
-            continue
-        if number not in candidates:
-            log.warning("the writer named %s as a replacement, which was not offered", number)
-            continue
-        numbers.append(candidates[number]["id"])
-    return numbers
-
-
-def candidates_block(
-    candidates: dict[int, dict[str, Any]],
-) -> str:
-    """The held statements as the writer reads them, or nothing when there are none."""
-    if not candidates:
-        return ""
-    listed = "\n".join(
-        f"[{number}] ({row['kind']}) {row['statement']}" for number, row in candidates.items()
-    )
-    return STANDING.format(standing=listed)
+    if said_at is None:
+        return "an unknown moment"
+    local = said_at.astimezone(zone)
+    abbreviation = local.strftime("%Z")
+    named = "" if abbreviation == zone.key else f" ({zone.key})"
+    return local.strftime(f"%Y-%m-%d %H:%M {abbreviation}{named}, a %A")
 
 
 def parse(reply: str) -> list[dict]:
@@ -371,6 +331,7 @@ async def write(
 
     instructions = INSTRUCTIONS.format(
         scope=found["scope_key"] or "unknown",
+        said=said_line(found["said_at"], settings.time_zone),
         before=found["before"] or "(nothing came before it)",
         message=found["message"] or "",
         kinds=", ".join(sorted(firing)),

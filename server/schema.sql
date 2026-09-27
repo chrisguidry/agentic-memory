@@ -343,24 +343,56 @@ ALTER TABLE memories ADD COLUMN IF NOT EXISTS actionable real;
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS prompt_embedding vector(384);
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS prompt_embedding_model text;
 
+-- The condition that ends a commitment, which is a prospective statement: a
+-- moment, or the text of an event that a later message reports. A statement of
+-- another kind has neither. A read leaves out a statement whose moment has
+-- passed, so the moment needs no write to end it.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS until_moment timestamptz;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS until_event text;
+
+-- The end of a statement that no newer statement replaced. `event` is a later
+-- message that met the condition, and that message is named. `reread` is a
+-- statement the questions no longer write, left behind by a read of the
+-- record under new questions. Like `superseded_at`, `ended_at` is a recorded
+-- time, and clearing these columns makes the statement live again.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_at timestamptz;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_reason text
+    CHECK (ended_reason IN ('event', 'reread'));
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_by_session_id text;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_by_entry_id text;
+
 -- One statement per message per kind per question set, so a retry writes
 -- nothing and one message can carry a fact and a rule at once.
 CREATE UNIQUE INDEX IF NOT EXISTS memories_source
     ON memories (session_id, entry_id, kind, questions_fingerprint);
 
--- A retired statement is absent from every read, so the read index holds only
--- the live ones. The scope comes first because every read is narrowed by it,
--- and the kind follows because the ranking weighs kinds differently.
-CREATE INDEX IF NOT EXISTS memories_live
+-- A statement that was replaced or that ended is absent from every read, so
+-- the read index holds only the live ones. The scope comes first because every
+-- read is narrowed by it, and the kind follows because the ranking weighs kinds
+-- differently.
+--
+-- An ended statement has no statement that replaced it, so `superseded_by`
+-- cannot mark it, and the predicate tests both columns. Postgres uses a
+-- partial index only for a query that repeats the predicate, so every query
+-- over the live statements builds it from `memories.live`. A commitment past
+-- its moment stays in the index, because a moment passes without a write.
+CREATE INDEX IF NOT EXISTS memories_live_scope
     ON memories (scope_key, kind, said_at DESC)
-    WHERE superseded_by IS NULL;
+    WHERE superseded_by IS NULL AND ended_at IS NULL;
 
 -- The nearest live statements to a prompt. Cosine, because the model's
 -- vectors are compared that way, and only the live rows, because a retired
 -- statement is never handed out.
-CREATE INDEX IF NOT EXISTS memories_embedding
+CREATE INDEX IF NOT EXISTS memories_live_embedding
     ON memories USING hnsw (embedding vector_cosine_ops)
-    WHERE superseded_by IS NULL;
+    WHERE superseded_by IS NULL AND ended_at IS NULL;
+
+-- These two names hold the same indexes with a predicate that tests only
+-- `superseded_by`, so an ended statement would stay in them. CREATE INDEX IF
+-- NOT EXISTS does not change the predicate of an index that exists, so the
+-- indexes above take new names and these are dropped.
+DROP INDEX IF EXISTS memories_live;
+DROP INDEX IF EXISTS memories_embedding;
 
 -- The nearest readings to a prompt, which the turn path reads on every prompt.
 CREATE INDEX IF NOT EXISTS classifications_prompt_embedding

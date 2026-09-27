@@ -27,7 +27,7 @@ NEAREST = f"""
            actionable, 1 - (embedding <=> $1::vector) AS similarity,
            id = ANY($3::bigint[]) AS seen
     FROM memories
-    WHERE {live_at("$5")}
+    WHERE {live_at("$5", "$6")}
       AND embedding IS NOT NULL
       AND embedding_model = $4
       AND (scope_key IS NULL
@@ -82,6 +82,7 @@ async def match(
     actionable: float,
     now: datetime | None = None,
     as_of: datetime | None = None,
+    by_said_at: bool = False,
 ) -> list[dict]:
     """The statements about this prompt that the session has not seen, best first.
 
@@ -89,10 +90,14 @@ async def match(
     statement's answer has to clear. `now` is the moment the statements are aged
     to. `as_of` is the moment the table is read at, and none means the table as
     it is.
+    `by_said_at` reads the table as it is, with each statement placed at its
+    message's moment.
     """
     moment = now or datetime.now(UTC)
     with phase("nearest"):
-        rows = await pool.fetch(NEAREST, literal(vector), scope_key, list(seen), model, as_of)
+        rows = await pool.fetch(
+            NEAREST, literal(vector), scope_key, list(seen), model, as_of, by_said_at
+        )
     # The baseline is over every statement, whatever its answer. A short reply
     # scores well against the statements the threshold leaves out, and without
     # them the baseline would fall and let the next statement down through.

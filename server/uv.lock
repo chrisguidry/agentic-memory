@@ -15,6 +15,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pydocket" },
     { name = "typesafe-sdk" },
+    { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -37,6 +38,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pydocket", specifier = ">=0.25" },
     { name = "typesafe-sdk", specifier = ">=0.7" },
+    { name = "tzdata", specifier = ">=2025.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 

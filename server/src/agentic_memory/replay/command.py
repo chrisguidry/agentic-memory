@@ -51,6 +51,14 @@ def parser() -> argparse.ArgumentParser:
         help="leave out the prompts said in this scope or under it; give it again for another",
     )
     found.add_argument(
+        "--by-said-at",
+        action="store_true",
+        help=(
+            "read the store as it is now, and place each statement at the moment its message"
+            " was said, for a store whose statements were written after the range"
+        ),
+    )
+    found.add_argument(
         "--pairs",
         type=Path,
         default=None,
@@ -72,7 +80,7 @@ async def run(arguments: argparse.Namespace) -> str:
             as_of=arguments.as_of,
             excluded=arguments.exclude_scope,
         )
-        turns = await replay(pool, embedder, settings, said)
+        turns = await replay(pool, embedder, settings, said, by_said_at=arguments.by_said_at)
         given = await labels(pool)
     finally:
         await pool.close()

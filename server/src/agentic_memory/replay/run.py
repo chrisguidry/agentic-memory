@@ -88,7 +88,12 @@ async def prompts(
 
 
 async def replay(
-    pool: asyncpg.Pool, embedder: Embedder, settings: Settings, said: Sequence[Prompt]
+    pool: asyncpg.Pool,
+    embedder: Embedder,
+    settings: Settings,
+    said: Sequence[Prompt],
+    *,
+    by_said_at: bool = False,
 ) -> list[Turn]:
     """What each prompt would be handed, in the order the prompts were said.
 
@@ -96,6 +101,12 @@ async def replay(
     the statements to that moment. What a session was handed is kept here and
     not in the injections table, so the opening list and the filter on what a
     session saw work as they did live, and the table is not written.
+
+    `by_said_at` reads the table as it is now instead, with each statement
+    placed at the moment its message was said. A re-read of the record writes
+    its statements after the week it reads, so this is how that week is
+    replayed against them. A statement retired or ended since is absent from
+    every prompt, including the ones said before it was retired.
     """
     handed: dict[str, set[int]] = defaultdict(set)
     turns = []
@@ -110,6 +121,7 @@ async def replay(
             prompt=prompt.body,
             now=prompt.said_at,
             as_of=prompt.said_at,
+            by_said_at=by_said_at,
         )
         seen.update(row["id"] for row in handout.statements)
         turns.append(Turn(prompt, handout))

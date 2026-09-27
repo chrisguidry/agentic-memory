@@ -19,6 +19,7 @@ from docket import Depends, Shared
 from fastembed import TextEmbedding
 
 from .db import store_pool
+from .memories import live
 from .settings import Settings, get_settings
 
 log = logging.getLogger("agentic_memory.embed")
@@ -88,10 +89,10 @@ async def shared_embedder():
 
 # The live statements this model has not embedded. A row embedded by another
 # model counts as unembedded, because its vector is in another space.
-UNEMBEDDED = """
+UNEMBEDDED = f"""
     SELECT id, statement
     FROM memories
-    WHERE superseded_by IS NULL
+    WHERE {live()}
       AND (embedding IS NULL OR embedding_model IS DISTINCT FROM $1)
       AND ($2::text IS NULL OR (session_id = $2 AND entry_id = $3))
     ORDER BY id
