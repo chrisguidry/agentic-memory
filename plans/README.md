@@ -49,10 +49,32 @@ turn the record into memory. A worker reads a window of a session, asks a
 cheap model which kinds of memory are in it, and writes down the
 probabilities. No memory is written.
 
-Nothing after this is written, and no other plan is open. The design says where
-the work can go, and a plan is written when the work is about to start. A
-plan written now for a step six months out would be a guess with a number
-on it.
+* [08, The replay](08-the-replay.md). Replays a week of real prompts
+  through the turn path, labels what each prompt was handed, and measures
+  how long each part of a recall takes. Every plan after it is measured
+  with it.
+* [09, The retries](09-the-retries.md). The bastion stops retrying a
+  transcript that is gone and keeps its pending set across a restart, and
+  the worker sweeps for readings and statements a failed model call left
+  undone.
+* [10, The opening and the filters](10-the-opening-and-the-filters.md).
+  A session's first prompt is matched like every other, statements with no
+  scope arrive only through the match, and two answers written off the turn
+  path keep replies and remarks out of it.
+* [11, Commitments](11-commitments.md). Prospective narrows to commitments
+  with a condition that ends them, decisions move to the kinds that last,
+  and the state of the work is not written.
+* [12, Merge across kinds](12-merge-across-kinds.md). The merge compares
+  statements of every kind and retires one that a newer one changes, then
+  the corpus is read again under the questions from 10 and 11.
+
+08 comes first because 10, 11, and 12 are measured with it. 09 is
+independent of the rest. 12 runs after 10 and 11, so the corpus is read
+again once.
+
+Nothing after 12 is written. The design says where the work can go, and a
+plan is written when the work is about to start. A plan written now for a
+step six months out would be a guess with a number on it.
 
 ## Completed
 
