@@ -151,8 +151,20 @@ class Settings(BaseSettings):
     # one scope of 2,081 statements, 7 of 25 merges this question made at 0.5
     # were wrong, and most of the wrong ones were answered from 0.50 to 0.62.
     # At 0.6, 6 of those 7 do not merge, and 4 of the 18 right ones do not
-    # either.
-    merge_settles: float = 0.6
+    # either. With the question of what the newer statement keeps in force, a
+    # blind judge found 9 of 24 merges this question made at 0.6 wrong, most
+    # of them a statement retired when one part of it changed and the rest was
+    # dropped. Read from that pass's answers, 0.7 leaves 4 wrong of the 18 it
+    # keeps. It is still about one in five, so no pass over the stored
+    # statements runs until this question is made stricter.
+    merge_settles: float = 0.7
+
+    # How sure the System One model has to be that the newer statement of a pair
+    # keeps everything a reader needs from the older one, before a pair that
+    # says the same thing merges. Over 59 merges from a pass over the whole
+    # store, every wrong merge the first question made was answered below 0.4
+    # here. At 0.5, two right merges answered 0.42 and 0.47 stand as well.
+    merge_keeps: float = 0.4
 
     # Whether a statement is compared with neighbours of other kinds, and not
     # only with its own. One decision is often written once as praise and once

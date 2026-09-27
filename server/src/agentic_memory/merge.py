@@ -16,8 +16,10 @@ statements of two kinds that are only about the same area.
 Two statements at or above the upper cutoff are one sentence with a word moved,
 and they merge on the number alone. Between the upper and the lower cutoff an
 embedding cannot tell a negation from its opposite, so the System One model is
-asked two questions: whether the two say the same thing, and whether the newer
-one settles the question the older one settled, in a different way. Below the
+asked three questions: whether the two say the same thing, whether the newer
+one settles the question the older one settled, in a different way, and whether
+the newer one keeps everything a reader needs from the older one. A pair that
+says the same thing merges only on a yes to the third question too. Below the
 lower cutoff they are different enough that nothing is compared.
 
 Two rules keep a pair apart. A statement retires only into one whose kind
@@ -95,7 +97,33 @@ SETTLES = Noul(
     },
 )
 
-QUESTIONS = {"same": SAME, "settles": SETTLES}
+# The third question, asked in the same call, is the test a "same thing" merge
+# has to pass as well. The first question says yes to pairs that are only about
+# one area, and it retired a general rule into one case of it, and a statement
+# into a newer one that left out a rule, a reason, or a condition. The survivor
+# is all a reader keeps, so the older statement retires only when nothing it
+# said is lost.
+KEEPS = Noul(
+    instructions={
+        "question": "Does `second` keep everything a reader needs from `first`?",
+        "inspect": "`first` and `second`",
+        "focus": (
+            "`second` was said after `first`. A reader who keeps only `second` loses "
+            "whatever `first` says that `second` does not. `second` keeps `first` when "
+            "each rule, fact, value, condition, and reason in `first` is also in "
+            "`second`, in the same words or in other words, and `second` may add to "
+            "it. `second` does not keep `first` when it leaves out a part of `first`, "
+            "when it states one case of a general rule in `first`, or when it is about "
+            "another thing in the same area."
+        ),
+    },
+    criteria={
+        "true": "Each part of `first` is also in `second`.",
+        "false": "A part of `first` is missing from `second`, or `second` is about another thing.",
+    },
+)
+
+QUESTIONS = {"same": SAME, "settles": SETTLES, "keeps": KEEPS}
 
 # The point on the model's probability above which the first answer is a yes.
 YES = 0.5
@@ -180,9 +208,9 @@ def placed(row: Any) -> tuple:
 
 
 async def answers(client: Judge, older: str, newer: str) -> dict[str, float] | None:
-    """The model's answers to both questions about a pair, or none when it refused.
+    """The model's answers to the questions about a pair, or none when it refused.
 
-    A refusal is read as a no to both, so the two statements both stand. The
+    A refusal is read as a no to each, so the two statements both stand. The
     ledger records the refusal, and the pass goes on rather than failing on a
     request the provider will refuse again.
     """
@@ -246,8 +274,10 @@ async def why(client: Judge, subject: Any, neighbour: Any, settings: Settings) -
     """Why the older of two statements retires into the newer, or none when both stand.
 
     A pair that says the same thing merges only when the newer statement holds
-    every literal of the older one, because a general statement that retires a
-    specific one loses the details a reader copies. A newer statement that
+    every literal of the older one, and only when the model says the newer one
+    keeps everything a reader needs from the older one, because a general
+    statement that retires a specific one loses the details a reader copies,
+    and a narrower one loses the rest of the rule. A newer statement that
     settles the older one in a different way changes a value on purpose, such
     as port 8080 to 9090, so that merge does not ask for the literals. It is
     asked only when the first question says no, because a pair that says the
@@ -270,11 +300,17 @@ async def why(client: Judge, subject: Any, neighbour: Any, settings: Settings) -
     found = await answers(client, older["statement"], newer["statement"])
     if found is None:
         return None
+    # The thresholds are set from the answers a drill reads, and the ledger
+    # records the call but not what the model answered.
+    log.debug("%s into %s answered %s", older["id"], newer["id"], found)
     if found["same"] >= YES:
-        # A yes here with a literal lacking is a general statement of the same
-        # thing, not a new value. The second question would retire the older
-        # one into it and lose the literal, so the pair stands.
-        return None if lacking else "same"
+        # A yes here with a literal lacking, or with a part of the older one
+        # missing, is a narrower statement of the same thing, not a new value.
+        # The second question would retire the older one into it and lose that
+        # part, so the pair stands.
+        if lacking or found["keeps"] < settings.merge_keeps:
+            return None
+        return "same"
     # Two statements said at one moment, such as two kinds from one message,
     # have no newer one, so neither can have changed the other's answer.
     if newer["said_at"] > older["said_at"] and found["settles"] >= settings.merge_settles:

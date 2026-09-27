@@ -41,10 +41,19 @@ def probability(answer: bool | float) -> float:
 
 
 class FakeJudge:
-    """A System One model that gives the same two answers about every pair it is asked."""
+    """A System One model that gives the same answers about every pair it is asked."""
 
-    def __init__(self, same: bool | float = True, settles: bool | float = False):
-        self.answers = {"same": probability(same), "settles": probability(settles)}
+    def __init__(
+        self,
+        same: bool | float = True,
+        settles: bool | float = False,
+        keeps: bool | float = True,
+    ):
+        self.answers = {
+            "same": probability(same),
+            "settles": probability(settles),
+            "keeps": probability(keeps),
+        }
         self.asked: list[tuple[str, str]] = []
 
     async def system_one(self, *, state, questions):

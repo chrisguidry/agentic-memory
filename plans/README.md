@@ -50,12 +50,16 @@ cheap model which kinds of memory are in it, and writes down the
 probabilities. No memory is written.
 
 * [12, Merge across kinds](12-merge-across-kinds.md). The merge compares
-  statements of every kind and retires one that a newer one changes, then
-  the corpus is read again under the questions from 10 and 11.
+  statements of every kind and retires one that a newer one changes. A
+  merge pass over the stored statements waits for a stricter question of
+  whether two statements say the same thing.
+* [13, The embedding](13-the-embedding.md). A larger embedding model,
+  measured against the labelled probe prompts, to reach the good statements
+  the current one never ranks near their prompt.
 
-12 is measured with the replay and the labels from 08.
+12 and 13 are measured with the labelled probe prompts.
 
-Nothing after 12 is written. The design says where the work can go, and a
+Nothing after 13 is written. The design says where the work can go, and a
 plan is written when the work is about to start. A plan written now for a
 step six months out would be a guess with a number on it.
 
@@ -85,6 +89,9 @@ and neither records what its drill measured.
   store is the privacy boundary, and a harness can serve more than one
   store. What a session reads and writes when it belongs to two is not
   decided, and the options are worth trying in the open.
+* [Who said it](open-problems/who-said-it.md). A person's statement and an
+  agent's can disagree and both stay live. Where trust by speaker applies,
+  in the ranking, the merge, or the writer, is not decided.
 
 ## Rejected
 

@@ -72,7 +72,7 @@ async def test_the_second_question_has_its_own_threshold(store, changed, thresho
     assert len(await live(store)) == standing
 
 
-@pytest.mark.parametrize(("settles", "standing"), [(0.55, 2), (0.65, 1)])
+@pytest.mark.parametrize(("settles", "standing"), [(0.65, 2), (0.75, 1)])
 async def test_a_hesitant_second_answer_retires_nothing_by_default(
     store, changed, settles, standing
 ):

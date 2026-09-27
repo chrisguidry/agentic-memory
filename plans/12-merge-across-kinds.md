@@ -81,16 +81,17 @@ plans 11 and 12 compare before and after in that mode.
 
 ## What is built
 
-The merge asks both questions, and a statement retires only into one it was
-compared with and only into one that is live. The mark that a statement was
-compared is written in the same transaction as its retirements, so a retry
+The merge asks both questions and a third, below, and a statement retires
+only into one it was compared with and only into one that is live. The mark
+that a statement was compared is written in the same transaction as its retirements, so a retry
 after a failure compares it again. The writer's task embeds, sorts, and
 merges on every attempt, so a retry finishes what a failed attempt left.
 
-Merging across kinds is built and off. Over the largest scope, 2,081
-statements, a drill judged 15 of 40 sampled merges wrong, 8 of 15 of them
-across kinds, and at 0.5 the second question made 7 wrong merges of 25. At
-0.6 it makes 1 wrong merge in the sample, and that is its threshold.
+Merging across kinds is built and off by default. Over the largest scope,
+2,081 statements, a drill judged 15 of 40 sampled merges wrong, 8 of 15 of
+them across kinds, and at 0.5 the second question made 7 wrong merges of 25.
+At 0.6 it made 1 wrong merge in that sample. The passes below found it still
+wrong far more often, and its threshold is 0.7.
 
 The merge pass is built as `agentic-memory-backfill merge` and has not run.
 A failure for one statement is counted, the statement stays unmarked, and
@@ -101,7 +102,7 @@ each.
 A pass with merging across kinds on retired 223 statements, and a judge
 found 11 of 30 sampled merges wrong. In the wrong merges, specific
 statements retired into newer general or approving ones, and 17 statements
-that were not praise retired into praise. Three rules apply on the write
+that were not praise retired into praise. Four rules apply on the write
 and in the pass, in one kind and across kinds:
 
 - A statement retires only into one whose kind lasts at least as long, at
@@ -127,7 +128,16 @@ and in the pass, in one kind and across kinds:
   apply this rule, because a newer statement that settles an older one in a
   different way changes a value on purpose, such as a port from 8080 to
   9090. A pair above the upper cutoff that differs in a literal is asked the
-  two questions.
+  questions.
+- A statement retires into one that says the same thing, by the first
+  question, only when the model also says yes to a third question in the
+  same call: whether the newer statement keeps everything a reader needs from
+  the older one. It is read as a yes at `merge_keeps`, 0.4. The first question
+  says yes to pairs that are only about one area, and without the third it
+  retires a general rule into one case of it, and a statement into a newer
+  one that leaves out a rule, a reason, or a condition. A pair the first
+  question calls the same thing stands on a no here, whatever the second
+  question says. A merge on the upper cutoff asks nothing.
 
 Each merge records its run on the statements it retires and compares, and
 `agentic-memory-backfill unmerge --run <name>` undoes one run: its retired
@@ -160,6 +170,43 @@ stated kinds protects the rules a person gave and leaves those errors within
 one kind, which a stricter first question would have to fix. The store holds no
 retirement from any pass. The writer still merges each new statement under
 the same guards.
+
+Two more passes ran on a copy of the store the same day, with merging across
+kinds on. Pass d had the guards of pass c and the rule for stated kinds, and
+pass e added the third question. A judge who did not know which pass made
+each merge judged 30 of each, 15 within one kind and 15 across kinds, and
+both passes were undone.
+
+| pass | retired | judged wrong | within one kind | across kinds |
+|---|---|---|---|---|
+| d | 89 | 10 of 30 | 7 of 15 | 3 of 15 |
+| e | 55 | 11 of 30 | 6 of 15 | 5 of 15 |
+
+Before pass e, the three questions were asked about 59 of pass d's merges.
+Every wrong merge the first question made was answered below 0.4 by the
+third question, and 9 of the right ones were too. A second wording of the
+first question that asked whether `second` says everything `first` says
+answered almost the same as the third question, and so did a shorter third
+question with no focus. The third question is kept apart from the first,
+because the first also decides that a pair is not a changed value.
+
+In pass e, 17 statements retired by the first question and 35 by the second.
+Of the sampled merges, 2 of 6 by the first question were wrong and 9 of 24 by
+the second. A wrong merge by the second question retires a statement of
+several parts into a newer one that changes one part and leaves out the
+rest, or into one about a different thing in the same area. Read from the
+answers pass e logged, a threshold of 0.7 on the second question leaves 4
+wrong of the 18 sampled merges it keeps. A fourth question, whether `second`
+keeps everything of `first` apart from what it changes, answered from 0.06 to
+0.26 on the wrong merges and 0.06 to 0.67 on the right ones, so it does not
+separate them. The second question's threshold is 0.7, and no pass over the
+stored statements runs until the second question is made stricter.
+
+The third question reduces the first question's errors, and 2 of 6 sampled
+merges the first question made in pass e were still wrong. Pass e was wrong
+11 times in 30, against 10 in pass d, and the second question made most of
+the wrong merges. No pass runs on the store until
+the second question is wrong at most about 1 in 10.
 
 ## The contracts
 
