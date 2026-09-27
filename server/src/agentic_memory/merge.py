@@ -1,35 +1,43 @@
-"""Merging statements that say the same thing.
+"""Merging statements that say the same thing, or that settle one question.
 
 The table holds one rule many times in different words, and the match cannot
-pass a rule that is its own baseline. A statement is compared with its nearest
-live neighbours of the same kind in the same scope, and the ones that say the
-same thing retire into the one said most recently through the pointer plan 03
-built. Nothing is deleted or rewritten.
+pass a rule that is its own baseline, and a later message can change a
+decision an older statement records. A statement is compared with its nearest
+live neighbours of the same kind in the same scope, and the older of a pair
+retires into the newer through the pointer plan 03 built. Nothing is deleted or
+rewritten.
+
+One decision is also often written twice, once as praise when the person
+approves it and once as a fact when it is settled. A setting compares a
+statement with neighbours of every kind, which merges the two, and the survivor
+keeps its own kind. The setting is off, because the first question also merges
+statements of two kinds that are only about the same area.
 
 Two statements at or above the upper cutoff are one sentence with a word moved,
 and they merge on the number alone. Between the upper and the lower cutoff an
 embedding cannot tell a negation from its opposite, so the System One model is
-asked whether the two agree. Below the lower cutoff they are different enough
-that nothing is compared.
+asked two questions: whether the two say the same thing, and whether the newer
+one settles the question the older one settled, in a different way. Below the
+lower cutoff they are different enough that nothing is compared.
 """
 
+import asyncio
 import logging
+from dataclasses import dataclass
+from typing import Any, Literal, Protocol
 
 import asyncpg
-from docket import Depends, Shared
 from typesafe_sdk import Noul, TypeSafeBadRequestError
 
-from .classify import recorded_model_client
-from .db import store_pool
-from .ledger import RecordedSystemOne, calling
+from .ledger import calling
 from .memories import live, retire
-from .settings import Settings, get_settings
+from .settings import Settings
 
 log = logging.getLogger("agentic_memory.merge")
 
-# The question the classifier's System One model answers about a pair. It is one
-# yes/no proposition, so it needs no threshold per kind: the model's probability
-# is read as a yes above one half.
+# The first question the classifier's System One model answers about a pair. It
+# is one yes/no proposition, so it needs no threshold of its own: the model's
+# probability is read as a yes above one half.
 SAME = Noul(
     instructions={
         "question": (
@@ -49,8 +57,57 @@ SAME = Noul(
     },
 )
 
-# The point on the model's probability above which an answer is read as a yes.
+# The second question, asked in the same call. A newer statement that changes
+# an older one answers no to the first question, and without this one both
+# stand, so a reader is handed two statements that disagree with nothing to say
+# which is current. A detail added to the older statement, or a statement about
+# another thing, answers no here, because retiring the older one would lose it.
+SETTLES = Noul(
+    instructions={
+        "question": (
+            "Does `second` settle the same question as `first`, and settle it in a different way?"
+        ),
+        "inspect": "`first` and `second`",
+        "focus": (
+            "`second` was said after `first`. Both settle one question when they "
+            "answer the same choice about the same thing, such as which tool, which "
+            "value, which place, or which rule. `second` settles it in a different "
+            "way when a reader who follows `second` can no longer follow `first`. A "
+            "`second` that only adds a detail to `first`, or that answers a choice "
+            "about another thing, does not."
+        ),
+    },
+    criteria={
+        "true": "Both answer one choice about one thing, and `second` answers it differently.",
+        "false": "They answer different choices, or `second` keeps what `first` says.",
+    },
+)
+
+QUESTIONS = {"same": SAME, "settles": SETTLES}
+
+# The point on the model's probability above which the first answer is a yes.
 YES = 0.5
+
+# Why the older statement of a pair retired: the similarity alone, or a yes to
+# one of the two questions.
+Reason = Literal["cutoff", "same", "settles"]
+
+
+@dataclass(frozen=True)
+class Merged:
+    """One statement retired into another, why, and whether their kinds differ."""
+
+    retired: int
+    survivor: int
+    reason: Reason
+    across: bool
+
+
+class Judge(Protocol):
+    """A System One client: the recorded one, or one that limits calls at once."""
+
+    async def system_one(self, *, state: Any, questions: Any) -> Any: ...
+
 
 # One live statement embedded with the model being compared, with its kind, its
 # scope, and the moment it was said. A statement with no moment cannot be placed
@@ -67,11 +124,19 @@ SUBJECT = f"""
       AND said_at IS NOT NULL
 """
 
-# The live neighbours of that statement: the same kind, the same scope, embedded
-# with the same model, at or above the lower cutoff, nearest first. A null scope
-# is its own scope, because "tests come before code" in one project and in
+# The live neighbours of that statement: the same scope, embedded with the same
+# model, placed in time, at or above the lower cutoff, nearest first. A null
+# scope is its own scope, because "tests come before code" in one project and in
 # another are one rule stated twice and merging them would move where the rule
 # applies.
+#
+# `$4` keeps only the neighbours said before the statement. The pass over the
+# table sets it, so each pair is asked about once, when the pass reaches the
+# newer statement of the pair.
+#
+# `$5` admits neighbours of every kind. Without it, only the statement's own
+# kind is a candidate, because the first question merges statements of two
+# kinds that are only about the same area.
 NEIGHBOURS = f"""
     SELECT m.id, m.statement, m.kind, m.scope_key, m.said_at,
            1 - (m.embedding <=> s.embedding) AS similarity
@@ -80,61 +145,85 @@ NEIGHBOURS = f"""
     WHERE {live("m")}
       AND (m.until_moment IS NULL OR m.until_moment > now())
       AND m.id <> $1
-      AND m.kind = $2
-      AND m.scope_key IS NOT DISTINCT FROM $3
+      AND m.scope_key IS NOT DISTINCT FROM s.scope_key
       AND m.embedding IS NOT NULL
-      AND m.embedding_model = $4
-      AND 1 - (m.embedding <=> s.embedding) >= $5
+      AND m.embedding_model = $2
+      AND m.said_at IS NOT NULL
+      AND 1 - (m.embedding <=> s.embedding) >= $3
+      AND (NOT $4::boolean OR (m.said_at, m.id) < (s.said_at, s.id))
+      AND ($5::boolean OR m.kind = s.kind)
     ORDER BY m.embedding <=> s.embedding
 """
 
-# Every live statement of this model that could still be merged, oldest first.
-# Oldest first means that when a group is reached, its newest statement is the
-# survivor, and the older ones retire into it.
-BACKLOG = f"""
-    SELECT m.id
-    FROM memories m
-    WHERE {live("m")}
-      AND m.embedding IS NOT NULL
-      AND m.embedding_model = $1
-      AND m.said_at IS NOT NULL
-    ORDER BY m.said_at ASC, m.id ASC
-"""
+# Marks a statement as compared with its neighbours. The writer's task and the
+# pass merge the statements that have no mark, so a retry finishes what a
+# failed attempt left, and no pair is asked about twice.
+COMPARED = "UPDATE memories SET merged_at = now() WHERE id = $1"
 
 
-async def agrees(client: RecordedSystemOne, first: str, second: str) -> bool:
-    """Whether the model says two statements say the same thing.
+def placed(row: Any) -> tuple:
+    """Where a statement falls in the order it was said."""
+    return (row["said_at"], row["id"])
 
-    A refusal is read as a no, so the two statements both stand. The ledger
-    records the refusal, and the pass goes on rather than failing on a request
-    the provider will refuse again.
+
+async def answers(client: Judge, older: str, newer: str) -> dict[str, float] | None:
+    """The model's answers to both questions about a pair, or none when it refused.
+
+    A refusal is read as a no to both, so the two statements both stand. The
+    ledger records the refusal, and the pass goes on rather than failing on a
+    request the provider will refuse again.
     """
     try:
         response = await client.system_one(
-            state={"first": first, "second": second},
-            questions={"same": SAME},
+            state={"first": older, "second": newer}, questions=QUESTIONS
         )
     except TypeSafeBadRequestError:
-        log.warning("the model refused the merge question", exc_info=True)
-        return False
-    return response.nouls["same"].noul >= YES
+        log.warning("the model refused the merge questions", exc_info=True)
+        return None
+    return {name: response.nouls[name].noul for name in QUESTIONS}
+
+
+async def why(client: Judge, subject: Any, neighbour: Any, settings: Settings) -> Reason | None:
+    """Why the older of two statements retires into the newer, or none when both stand."""
+    if neighbour["similarity"] >= settings.merge_upper:
+        return "cutoff"
+    older, newer = sorted([subject, neighbour], key=placed)
+    found = await answers(client, older["statement"], newer["statement"])
+    if found is None:
+        return None
+    if found["same"] >= YES:
+        return "same"
+    # Two statements said at one moment, such as two kinds from one message,
+    # have no newer one, so neither can have changed the other's answer.
+    if newer["said_at"] > older["said_at"] and found["settles"] >= settings.merge_settles:
+        return "settles"
+    return None
 
 
 async def merge(
     pool: asyncpg.Pool,
-    client: RecordedSystemOne,
+    client: Judge,
     *,
     statement_id: int,
     model: str,
     settings: Settings,
     run: str = "live",
-) -> list[int]:
-    """Merge the near-duplicates of one statement, and say which ones ended.
+    earlier: bool = False,
+) -> list[Merged]:
+    """Merge one statement with its neighbours, and say which ones ended.
 
-    The statement and the neighbours that say the same thing are one group, and
-    the group's most recently said member is the survivor. Every other member
-    takes the pointer to the survivor, so the ones merged in one pass point
-    straight at it rather than at each other.
+    A statement retires only into a statement it was compared with. The older
+    neighbours that merge retire into the statement, and the statement retires
+    into the newest of the newer neighbours that merge. Two neighbours were
+    never compared with each other, so neither retires into the other, and the
+    newer neighbours that the statement does not retire into stay live.
+
+    The write merges the newest statement, so every older duplicate points
+    straight at it. The statement is marked compared in the same transaction
+    that stores the retirements, so a failure before the commit leaves it
+    unmarked and a retry compares it again.
+
+    `earlier` compares the statement only with the ones said before it.
     """
     subject = await pool.fetchrow(SUBJECT, statement_id, model)
     if subject is None:
@@ -143,46 +232,72 @@ async def merge(
     neighbours = await pool.fetch(
         NEIGHBOURS,
         statement_id,
-        subject["kind"],
-        subject["scope_key"],
         model,
         settings.merge_lower,
+        earlier,
+        settings.merge_across_kinds,
     )
 
-    group = [dict(subject)]
     with calling(
         "merge",
         session_id=subject["session_id"],
         entry_id=subject["entry_id"],
         run=run,
     ):
-        for neighbour in neighbours:
-            same = neighbour["similarity"] >= settings.merge_upper or await agrees(
-                client, subject["statement"], neighbour["statement"]
-            )
-            if same:
-                group.append(dict(neighbour))
+        # Every call finishes before a failure is raised, so no call is left
+        # running after the merge has given up on the statement.
+        reasons = await asyncio.gather(
+            *(why(client, subject, neighbour, settings) for neighbour in neighbours),
+            return_exceptions=True,
+        )
+    for reason in reasons:
+        if isinstance(reason, BaseException):
+            raise reason
 
-    if len(group) == 1:
-        return []
+    joined = [
+        (neighbour, reason)
+        for neighbour, reason in zip(neighbours, reasons, strict=True)
+        if reason is not None
+    ]
+    older = [(row, reason) for row, reason in joined if placed(row) < placed(subject)]
+    newer = [(row, reason) for row, reason in joined if placed(row) > placed(subject)]
+    # Older first, so each older neighbour retires while the statement is still
+    # live, and then the statement retires into the newer one.
+    pairs = [(row, subject, reason) for row, reason in older]
+    if newer:
+        survivor, reason = max(newer, key=lambda pair: placed(pair[0]))
+        pairs.append((subject, survivor, reason))
 
-    survivor = max(group, key=lambda row: (row["said_at"], row["id"]))
-    replaced = [row["id"] for row in group if row["id"] != survivor["id"]]
-    ended = await retire(pool, replaced=replaced, replacement=survivor["id"])
-    if ended:
-        log.info("merged %s statements into %s", len(ended), survivor["id"])
-    return ended
+    merged = []
+    async with pool.acquire() as connection, connection.transaction():
+        for retiring, survivor, reason in pairs:
+            ended = await retire(connection, replaced=[retiring["id"]], replacement=survivor["id"])
+            merged += [
+                Merged(
+                    retired=retiring["id"],
+                    survivor=survivor["id"],
+                    reason=reason,
+                    across=retiring["kind"] != survivor["kind"],
+                )
+                for _ in ended
+            ]
+        await connection.execute(COMPARED, statement_id)
+    if merged:
+        log.info("merged %s statements with %s", len(merged), statement_id)
+    return merged
 
 
-# The live statements one message wrote, which is what a write merges after it
-# embeds them. The model is the one being compared, so a statement embedded
-# before a model change is not merged until it is embedded again.
+# The live statements one message wrote that have not been compared, which is
+# what a write merges after it embeds them. The model is the one being compared,
+# so a statement embedded before a model change is not merged until it is
+# embedded again.
 WRITTEN = f"""
     SELECT m.id
     FROM memories m
     WHERE m.session_id = $1
       AND m.entry_id = $2
       AND {live("m")}
+      AND m.merged_at IS NULL
       AND m.embedding IS NOT NULL
       AND m.embedding_model = $3
     ORDER BY m.id
@@ -191,7 +306,7 @@ WRITTEN = f"""
 
 async def merge_message(
     pool: asyncpg.Pool,
-    client: RecordedSystemOne,
+    client: Judge,
     *,
     session_id: str,
     entry_id: str,
@@ -209,44 +324,3 @@ async def merge_message(
             )
         )
     return merged
-
-
-async def merge_backlog(
-    *,
-    settings: Settings,
-    pool: asyncpg.Pool,
-    client: RecordedSystemOne,
-    run: str = "live",
-) -> int:
-    """Merge every live statement that has not been merged, oldest first.
-
-    This is the pass that clears what is already in the table. It runs once as
-    a task the service can schedule, and the same code runs on every write
-    after that.
-    """
-    found = await pool.fetch(BACKLOG, settings.embed_model)
-    merged = 0
-    for row in found:
-        merged += len(
-            await merge(
-                pool,
-                client,
-                statement_id=row["id"],
-                model=settings.embed_model,
-                settings=settings,
-                run=run,
-            )
-        )
-    log.info("merged %s statements over the backlog", merged)
-    return merged
-
-
-async def merge_statements(
-    run: str = "live",
-    *,
-    settings: Settings = Depends(get_settings),
-    pool: asyncpg.Pool = Shared(store_pool),
-    client: RecordedSystemOne = Shared(recorded_model_client),
-) -> None:
-    """Merge the near-duplicates already in the table, as a task."""
-    await merge_backlog(settings=settings, pool=pool, client=client, run=run)

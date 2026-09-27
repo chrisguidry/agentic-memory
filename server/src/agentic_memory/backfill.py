@@ -1,17 +1,20 @@
 """Filling in what the worker writes for new rows, for the rows already stored.
 
-The worker answers three things as it writes, and a store that predates them
-needs them for every row it holds. `actionable` asks the System One model the actionable question
-about every live statement with no answer, and records each call in the ledger
-under a named run. `sort` asks it the sort's questions about every live
-prospective statement the sort has not answered, and writes where each one
-goes, under a named run the same way. `readings` embeds the prompt of every
+The worker answers some things as it writes, and a store that predates them
+needs them for every row it holds. `actionable` asks the System One model the
+actionable question about every live statement with no answer, and records each
+call in the ledger under a named run. `sort` asks it the sort's questions about
+every live prospective statement the sort has not answered, and writes where
+each one goes, under a named run the same way. `merge` compares every live
+statement with the ones said before it, under the merge's current questions,
+and records its calls the same way. `readings` embeds the prompt of every
 reading, with the local model and no network call.
 """
 
 import argparse
 import asyncio
 import sys
+from collections import Counter
 
 import asyncpg
 
@@ -20,6 +23,8 @@ from .classify import model_client
 from .db import open_pool
 from .embed import load
 from .ledger import RecordedSystemOne, priced
+from .merge_pass import merge_backlog
+from .merge_pass import price as merge_price
 from .readings import BATCH, embed_readings
 from .settings import get_settings
 from .sorting import TASK as SORT
@@ -59,6 +64,31 @@ def parser() -> argparse.ArgumentParser:
         asking.add_argument(
             "--concurrency", type=int, default=8, help="how many calls are made at once"
         )
+
+    merging = kinds.add_parser(
+        "merge",
+        help="merge every live statement with the ones said before it, oldest first",
+    )
+    merging.add_argument(
+        "--run", required=True, help="the name the ledger records these calls under"
+    )
+    merging.add_argument(
+        "--price",
+        action="store_true",
+        help="print the pairs the pass could ask and what they would cost, and stop",
+    )
+    merging.add_argument("--scope", default=None, help="take only the statements of this scope")
+    merging.add_argument(
+        "--limit", type=int, default=None, help="take at most this many, oldest first"
+    )
+    merging.add_argument(
+        "--concurrency", type=int, default=8, help="how many calls are made at once"
+    )
+    merging.add_argument(
+        "--again",
+        action="store_true",
+        help="compare the statements already compared too, as after a change to the questions",
+    )
 
     prompts = kinds.add_parser(
         "readings", help="embed the prompt of every reading, with the local model"
@@ -135,6 +165,42 @@ async def prospective(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
     )
 
 
+async def merge(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
+    settings = get_settings()
+    if arguments.price:
+        cost = await merge_price(
+            pool,
+            settings,
+            run=arguments.run,
+            scope=arguments.scope,
+            limit=arguments.limit,
+            again=arguments.again,
+        )
+        found = f"{cost.statements} statements and at most {cost.pairs} pairs to ask"
+        if cost.tokens is None:
+            return f"{found}, and no calls under the run {arguments.run} to price them from\n"
+        return f"{found}, about {cost.tokens[0]} input and {cost.tokens[1]} output tokens\n"
+    async with model_client() as client:
+        passed = await merge_backlog(
+            settings=settings,
+            pool=pool,
+            client=RecordedSystemOne(client, pool),
+            run=arguments.run,
+            scope=arguments.scope,
+            limit=arguments.limit,
+            concurrency=arguments.concurrency,
+            again=arguments.again,
+        )
+    reasons = Counter(row.reason for row in passed.merged)
+    across = sum(row.across for row in passed.merged)
+    return (
+        f"retired {len(passed.merged)} statements under the run {arguments.run}:"
+        f" {reasons['cutoff']} above the upper cutoff, {reasons['same']} saying the same"
+        f" thing, {reasons['settles']} settled again, {across} across kinds,"
+        f" and {len(passed.failed)} statements failed and stay unmarked for a rerun\n"
+    )
+
+
 async def readings(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
     settings = get_settings()
     embedder = await asyncio.to_thread(load, settings)
@@ -150,6 +216,8 @@ async def run(arguments: argparse.Namespace) -> str:
             return await actionable(pool, arguments)
         if arguments.backfill == "sort":
             return await prospective(pool, arguments)
+        if arguments.backfill == "merge":
+            return await merge(pool, arguments)
         return await readings(pool, arguments)
     finally:
         await pool.close()

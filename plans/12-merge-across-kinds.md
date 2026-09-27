@@ -79,6 +79,25 @@ them. The replay gains a mode that reads the store as it is now, with each
 statement aged as though it were written at the moment of its message, and
 plans 11 and 12 compare before and after in that mode.
 
+## What is built
+
+The merge asks both questions, and a statement retires only into one it was
+compared with and only into one that is live. The mark that a statement was
+compared is written in the same transaction as its retirements, so a retry
+after a failure compares it again. The writer's task embeds, sorts, and
+merges on every attempt, so a retry finishes what a failed attempt left.
+
+Merging across kinds is built and off. Over the largest scope, 2,081
+statements, a drill judged 15 of 40 sampled merges wrong, 8 of 15 of them
+across kinds, and at 0.5 the second question made 7 wrong merges of 25. At
+0.6 it makes 1 wrong merge in the sample, and that is its threshold.
+
+The merge pass is built as `agentic-memory-backfill merge` and has not run.
+A failure for one statement is counted, the statement stays unmarked, and
+the pass goes on, and a second run asks only about what is unmarked. Over
+the whole table it asks at most about 870 pairs, at about 710 input tokens
+each.
+
 ## The contracts
 
 - The merge's second question has its own threshold, which is a setting.

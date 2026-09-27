@@ -12,7 +12,7 @@ from docket import Docket, Worker
 from .classify import classify
 from .db import apply_schema, open_pool
 from .embed import embed_statements
-from .merge import merge_statements
+from .merge_pass import merge_statements
 from .readings import embed_reading
 from .settings import get_settings
 from .sweep import sweep_failures

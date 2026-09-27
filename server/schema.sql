@@ -376,6 +376,12 @@ ALTER TABLE memories ADD CONSTRAINT memories_ended_reason_check
 -- backfill would ask about it again.
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS sorted_at timestamptz;
 
+-- When the statement was compared with its neighbours for the merge. The
+-- writer's task merges a message's statements that have no moment here, so a
+-- retry after a failure between the write and the merge finishes the merge, and
+-- a statement already compared is not asked about again.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS merged_at timestamptz;
+
 -- One statement per message per kind per question set, so a retry writes
 -- nothing and one message can carry a fact and a rule at once.
 CREATE UNIQUE INDEX IF NOT EXISTS memories_source

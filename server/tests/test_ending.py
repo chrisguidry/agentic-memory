@@ -83,6 +83,20 @@ class TestEnd:
         await end(store, ended=[older], reason="reread")
         assert await retire(store, replaced=[older], replacement=newer) == []
 
+    async def test_nothing_is_replaced_by_an_ended_statement(self, store):
+        older, newer = await held(store, "older"), await held(store, "newer")
+        await end(store, ended=[newer], reason="reread")
+        assert await retire(store, replaced=[older], replacement=newer) == []
+
+    async def test_nothing_is_replaced_by_a_replaced_statement(self, store):
+        older, newer, newest = (
+            await held(store, "older"),
+            await held(store, "newer"),
+            await held(store, "newest"),
+        )
+        await retire(store, replaced=[newer], replacement=newest)
+        assert await retire(store, replaced=[older], replacement=newer) == []
+
     async def test_the_store_refuses_a_reason_it_does_not_know(self, store):
         commitment = await held(store)
         with pytest.raises(asyncpg.CheckViolationError):

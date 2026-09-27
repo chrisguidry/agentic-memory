@@ -135,6 +135,26 @@ class Settings(BaseSettings):
     sort_state: float = 0.5
     sort_moment: float = 0.5
 
+    # How sure the System One model has to be that the newer statement of a pair
+    # in the band settles the question the older one settled, in a different
+    # way, before the older one retires into it. A yes retires a statement that
+    # says something the newer one does not, so this question has a threshold
+    # of its own, apart from the one half the first question is read at. Over
+    # one scope of 2,081 statements, 7 of 25 merges this question made at 0.5
+    # were wrong, and most of the wrong ones were answered from 0.50 to 0.62.
+    # At 0.6, 6 of those 7 do not merge, and 4 of the 18 right ones do not
+    # either.
+    merge_settles: float = 0.6
+
+    # Whether a statement is compared with neighbours of other kinds, and not
+    # only with its own. One decision is often written once as praise and once
+    # as a fact, and this is what would merge the two. It is off, because over
+    # one scope of 2,081 statements, 15 of 40 merges it made were judged wrong,
+    # and the first question merged pairs that are only about the same area at
+    # 0.53 to 0.72, where the right merges were answered too. No threshold on
+    # the first question separates the two.
+    merge_across_kinds: bool = False
+
     # How often the sweep looks for work a failed model call left undone, and
     # how far back it looks. The interval is short because the query costs
     # nothing when there is nothing to find. The lookback is a month for the

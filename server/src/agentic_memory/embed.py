@@ -99,9 +99,12 @@ UNEMBEDDED = f"""
     LIMIT $4
 """
 
+# A new vector clears the mark the merge leaves, because the statement was
+# compared under the old vector, and a model change would otherwise leave every
+# statement marked and never compared under the new one.
 STORE = """
     UPDATE memories
-    SET embedding = $2::vector, embedding_model = $3
+    SET embedding = $2::vector, embedding_model = $3, merged_at = NULL
     WHERE id = $1
 """
 

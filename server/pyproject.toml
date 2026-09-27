@@ -53,7 +53,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 "src/agentic_memory/classify.py" = ["B008"]
 "src/agentic_memory/synthesize.py" = ["B008"]
 "src/agentic_memory/embed.py" = ["B008"]
-"src/agentic_memory/merge.py" = ["B008"]
+"src/agentic_memory/merge_pass.py" = ["B008"]
 "src/agentic_memory/sweep.py" = ["B008"]
 "src/agentic_memory/readings.py" = ["B008"]
 

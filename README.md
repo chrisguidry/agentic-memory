@@ -8,8 +8,8 @@ describes. The service records what a person and their agents said, as
 OpenTelemetry log records, with enough provenance to work from later. A
 worker reads that record off the turn path: a cheap model classifies each
 message, a writer turns the ones worth keeping into statements, a merge
-retires the ones that say the same thing, and a ledger records every model
-call the worker makes.
+retires the ones that say the same thing and the ones a newer statement
+changed, and a ledger records every model call the worker makes.
 
 ## What runs
 

@@ -210,11 +210,11 @@ class TestCompletions:
 
 
 class TestRefusal:
-    async def test_a_refusal_writes_a_row_and_the_merge_question_answers_no(self, store):
+    async def test_a_refusal_writes_a_row_and_the_merge_questions_answer_nothing(self, store):
         refused = TypeSafeBadRequestError(400, {"detail": {}}, {})
         client = RecordedSystemOne(FakeSystemOne(refused), store)
         with calling("merge", session_id="s1", entry_id="e1", run="live"):
-            assert await _agrees(client) is False
+            assert await _answers(client) is None
         (row,) = await rows(store)
         assert row["outcome"] == "refused"
         assert row["error_type"] == "TypeSafeBadRequestError"
@@ -231,10 +231,10 @@ class TestRefusal:
         assert row["error_type"] == "http_400"
 
 
-async def _agrees(client) -> bool:
-    from agentic_memory.merge import agrees
+async def _answers(client) -> dict[str, float] | None:
+    from agentic_memory.merge import answers
 
-    return await agrees(client, "one", "two")
+    return await answers(client, "one", "two")
 
 
 class TestRetries:

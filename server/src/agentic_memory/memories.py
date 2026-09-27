@@ -137,10 +137,14 @@ STANDING = (
 """
 )
 
+# The replacement has to be live when the pointer is written, in the same
+# statement. A replacement that ended or was itself replaced after a caller
+# chose it would otherwise take the statement out of every read with it.
 RETIRE = f"""
     UPDATE memories
     SET superseded_by = $2, superseded_at = $3
     WHERE id = $1 AND {live()}
+      AND EXISTS (SELECT 1 FROM memories r WHERE r.id = $2 AND {live("r")})
 """
 
 # Why a statement ended with nothing to replace it. `event` is a later message

@@ -30,7 +30,8 @@ from .classify import (
 )
 from .db import store_pool
 from .labels import router as labels_router
-from .merge import merge_statements
+from .merge_pass import RUN as MERGE_RUN
+from .merge_pass import merge_statements
 from .otlp import walk
 from .probe import router as probe_router
 from .settings import get_settings
@@ -299,7 +300,7 @@ async def embed_all(request: Request) -> dict:
 
 
 @app.post("/merge")
-async def merge_all(request: Request, run: str = "merge") -> dict:
+async def merge_all(request: Request, run: str = MERGE_RUN) -> dict:
     """Merge the near-duplicates already in the table, oldest statement first.
 
     A statement is merged as it is written after this. This pass is for what

@@ -415,7 +415,8 @@ async def synthesize(
     )
     # Merged here rather than by a later pass, so a rule said twice does not sit
     # in the table twice waiting for the backlog. Merged after the sort, so a
-    # decision is merged under its new kind.
+    # decision is merged under its new kind. Only the statements not yet
+    # compared are merged, so a retry asks about no pair twice.
     merged = await merge_message(
         pool,
         judge,
