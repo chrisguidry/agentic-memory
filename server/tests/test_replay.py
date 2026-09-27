@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import asyncpg
 import pytest
 
+import agentic_memory.replay.command as replay_command
 from agentic_memory.embed import Embedder, embed_missing
 from agentic_memory.ingest import store as ingest
 from agentic_memory.otlp import walk
@@ -24,6 +25,11 @@ SCOPE = "example.test/acme/widget"
 # Later than the wall clock the store stamps a record with on arrival, so every
 # prompt a test writes has arrived by then.
 LATER = datetime.now(UTC) + timedelta(days=1)
+
+# The opening list is off by default, but most of these prompts ("start",
+# "rename the widget") do not name what a held statement is about, so the
+# list is the only way these tests get a held statement handed at all.
+OPENING = Settings(recall_opening_limit=3)
 
 
 def text(key: str, value: str) -> dict:
@@ -120,7 +126,7 @@ async def week(store: asyncpg.Pool) -> asyncpg.Pool:
 
 
 async def test_a_sessions_first_prompt_is_the_opening_and_the_rest_are_matched(week, embedder):
-    turns = await replayed(week, embedder)
+    turns = await replayed(week, embedder, settings=OPENING)
     assert [(turn.prompt.entry_id, turn.handout.form) for turn in turns] == [
         ("a1", "opening"),
         ("a2", "match"),
@@ -196,7 +202,7 @@ async def test_a_prompt_is_handed_what_was_live_when_it_was_said(
 ):
     await held(store, "the rule", created, retired)
     await said(store, "a", "a1", "start", MONDAY)
-    [turn] = await replayed(store, embedder)
+    [turn] = await replayed(store, embedder, settings=OPENING)
     assert handed(turn) == expected
 
 
@@ -206,7 +212,7 @@ async def test_a_commitment_is_handed_until_its_moment(store, embedder):
     )
     await said(store, "a", "a1", "start", MONDAY)
     await said(store, "b", "b1", "start", MONDAY + timedelta(days=2))
-    before, after = await replayed(store, embedder)
+    before, after = await replayed(store, embedder, settings=OPENING)
     assert (handed(before), handed(after)) == (["the hold"], [])
 
 
@@ -227,7 +233,7 @@ async def test_reading_by_said_at_places_each_statement_at_its_message(
 ):
     await held(store, "the rule", created, retired, said_at=said_at)
     await said(store, "a", "a1", "start", MONDAY)
-    [turn] = await replayed(store, embedder, by_said_at=True)
+    [turn] = await replayed(store, embedder, settings=OPENING, by_said_at=True)
     assert handed(turn) == expected
 
 
@@ -264,7 +270,7 @@ async def test_reading_by_said_at_still_ends_a_commitment_at_its_moment(store, e
     )
     await said(store, "a", "a1", "start", MONDAY)
     await said(store, "b", "b1", "start", MONDAY + timedelta(days=2))
-    before, after = await replayed(store, embedder, by_said_at=True)
+    before, after = await replayed(store, embedder, settings=OPENING, by_said_at=True)
     assert (handed(before), handed(after)) == (["the hold"], [])
 
 
@@ -296,8 +302,13 @@ async def test_another_session_is_handed_what_the_first_one_saw(embedded, embedd
     assert len(handed(other)) == 12
 
 
-async def test_the_command_prints_the_report_and_writes_the_pairs(week, postgres_url, tmp_path):
+async def test_the_command_prints_the_report_and_writes_the_pairs(
+    week, postgres_url, tmp_path, monkeypatch
+):
     written = tmp_path / "pairs.tsv"
+    # The command reads settings from the environment; turn the opening list on
+    # so the week's held statement is something the report and pairs can show.
+    monkeypatch.setattr(replay_command, "get_settings", lambda: OPENING)
     arguments = parser().parse_args(
         [
             "--since=2026-09-21",

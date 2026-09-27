@@ -15,16 +15,18 @@ import httpx
 import pytest
 import uvicorn
 
+import agentic_memory.app as app_module
 from agentic_memory.app import app
 from agentic_memory.embed import Embedder
 from agentic_memory.metrics import REGISTRY
+from agentic_memory.settings import Settings
 
 SESSION = "11111111-2222-3333-4444-555555555555"
 ASK = {"session_id": SESSION, "harness": "pi", "scope_key": "example.test/acme/widget"}
 
 
 @pytest.fixture
-async def service(store: asyncpg.Pool, embedder: Embedder) -> AsyncIterator[str]:
+async def service(store: asyncpg.Pool, embedder: Embedder, monkeypatch) -> AsyncIterator[str]:
     """The service on a port of its own, with one statement to hand out."""
     await store.execute(
         """
@@ -38,6 +40,9 @@ async def service(store: asyncpg.Pool, embedder: Embedder) -> AsyncIterator[str]
     )
     app.state.pool = store
     app.state.embedder = embedder
+    # The route reads settings fresh on every call; turn the opening list on so
+    # ASK's session, which sends no prompt, has the statement above to hand out.
+    monkeypatch.setattr(app_module, "get_settings", lambda: Settings(recall_opening_limit=3))
     port = _postgres.free_port()
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=port, lifespan="off", log_level="warning")

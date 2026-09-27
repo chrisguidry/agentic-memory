@@ -293,6 +293,6 @@ class TestEmbedding:
     async def test_the_settings_name_the_model_and_the_limits(self):
         settings = Settings()
         assert settings.embed_model and settings.embed_threads > 0
-        assert settings.recall_opening_limit > 0 and settings.recall_prompt_limit > 0
+        assert settings.recall_opening_limit >= 0 and settings.recall_prompt_limit > 0
         assert 0 < settings.recall_margin < 1
         assert 0 < settings.recall_actionable < 1

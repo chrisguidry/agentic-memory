@@ -10,9 +10,12 @@ import asyncpg
 import httpx
 import pytest
 
+import agentic_memory.app as app_module
+import agentic_memory.probe as probe_module
 from agentic_memory.app import app
 from agentic_memory.embed import Embedder
 from agentic_memory.metrics import REGISTRY
+from agentic_memory.settings import Settings
 
 SESSION = "11111111-2222-3333-4444-555555555555"
 ASK = {
@@ -24,7 +27,9 @@ ASK = {
 
 
 @pytest.fixture
-async def service(store: asyncpg.Pool, embedder: Embedder) -> AsyncIterator[httpx.AsyncClient]:
+async def service(
+    store: asyncpg.Pool, embedder: Embedder, monkeypatch
+) -> AsyncIterator[httpx.AsyncClient]:
     """The service in the client's own process, with two statements to hand out."""
     await store.execute(
         """
@@ -40,6 +45,11 @@ async def service(store: asyncpg.Pool, embedder: Embedder) -> AsyncIterator[http
     )
     app.state.pool = store
     app.state.embedder = embedder
+    # The routes read settings fresh on every call; turn the opening list on so
+    # a session's first ask here has the two statements above to hand out.
+    opened = Settings(recall_opening_limit=3)
+    monkeypatch.setattr(app_module, "get_settings", lambda: opened)
+    monkeypatch.setattr(probe_module, "get_settings", lambda: opened)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://service") as client:
         yield client

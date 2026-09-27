@@ -21,7 +21,10 @@ from agentic_memory.recall import choose
 from agentic_memory.settings import Settings
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
-NEIGHBOURS = Settings(recall_neighbours=5, recall_empty_share=0.6)
+# recall_neighbours and recall_empty_share narrow the readings these fixtures
+# compare a prompt with. recall_opening_limit is on so TestChoose can tell a
+# handed statement apart from an empty handout.
+NEIGHBOURS = Settings(recall_neighbours=5, recall_empty_share=0.6, recall_opening_limit=3)
 
 
 async def read(

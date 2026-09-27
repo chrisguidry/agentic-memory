@@ -61,28 +61,36 @@ class Settings(BaseSettings):
     embed_cache: str = ".fastembed"
 
     # What a turn is handed. Every prompt gets only the statements that are
-    # about what was typed, or nothing. A session's first prompt also gets the
-    # top of its scope's list, from the statements that have a scope, so the
-    # opening carries the standing rules for where the session is.
-    recall_opening_limit: int = 3
+    # about what was typed, or nothing. A session's first prompt can also get
+    # the top of its scope's list, from the statements that have a scope. The
+    # list is the same few statements for every session in a scope, whatever
+    # it is about, and over 90 probe sessions it was relevant about 2 times in
+    # 70, so it is off unless a deployment asks for it.
+    recall_opening_limit: int = 0
     recall_prompt_limit: int = 5
 
     # How far above the ninety-ninth percentile of the scope's similarities a
-    # statement has to score to be handed over. Measured against one scope of
-    # 379 statements, the best match was 0.087 and 0.099 above the baseline on
-    # two real hits and 0.061 to 0.072 on three prompts about nothing in the
-    # record, so 0.08 is between them and the room is thin. It is a guess until
-    # the handouts in `injections` are labelled.
-    recall_margin: float = 0.08
+    # statement has to score to be handed over. It was measured over 94 probe
+    # prompts against a store of about 2,900 live statements. Each statement
+    # a prompt was handed, or should have been, was labelled good, noisy, or
+    # wrong. A missed good statement costs as much as a noisy one, and a wrong
+    # one costs twice as much. A margin of 0.08 with an actionable threshold
+    # of 0.2 handed 19 good, 18 noisy, and 4 wrong statements. A margin of
+    # 0.09 with the threshold below handed 14 good, 7 noisy, and 2 wrong, and
+    # 0.10 handed 11, 3, and 2 at the same cost, so the margin is the one that
+    # hands more good statements. No absolute cutoff, band under the best
+    # match, or baseline over the statements nearest the prompt did clearly
+    # better. Most misses are not the margin's to fix: 18 of the 85 good
+    # statements were not among the twenty nearest to their prompt.
+    recall_margin: float = 0.09
 
     # How sure the System One model has to be that an agent starting new work
     # would act differently for knowing a statement, before the match hands the
     # statement out. A statement that has no answer yet is handed as before.
-    # Over 365 statements, the nine below 0.2 were all remarks that some piece
-    # of work went well. Between 0.2 and 0.35 those remarks were mixed with
-    # facts worth handing out, so the threshold is 0.2. It is a guess until the
-    # handed pairs are labelled.
-    recall_actionable: float = 0.2
+    # Below 0.2, the answers were remarks that some piece of work went well.
+    # Over the same 94 prompts, a threshold of 0.6 in place of 0.2 took out
+    # noisy statements and no good one.
+    recall_actionable: float = 0.6
 
     # How many of the prompts the classifier read are compared with a new
     # prompt, and the share of them that held no memory above which the prompt
