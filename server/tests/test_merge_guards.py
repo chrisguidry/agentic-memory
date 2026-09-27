@@ -2,7 +2,9 @@
 
 A statement retires only into one whose kind lasts at least as long, on any
 merge: the four durable kinds into each other, a plan into a plan or a durable
-kind, and praise into anything. A statement retires into one that says the
+kind, and praise into anything. A stated rule, a correction or a preference,
+retires only into another stated rule, because a fact or a step that applied
+it once does not keep it. A statement retires into one that says the
 same thing, by the upper cutoff or by the first question, only when that one
 holds all its literals. Either merge would lose what the older statement said:
 a rule retired into a plan ends when the plan does, a correction retired into
@@ -33,19 +35,20 @@ async def pair(store, older: tuple[str, str], newer: tuple[str, str], similarity
 
 # Every pair of kinds, the older statement's first, and whether it may retire
 # into the newer one. The four durable kinds last as long as each other, a plan
-# lasts less, and praise least. The two statements hold no literal the other
-# lacks, so only the kinds decide.
+# lasts less, and praise least, and a correction or a preference retires only
+# into a correction or a preference. The two statements hold no literal the other lacks, so
+# only the kinds decide.
 KIND_PAIRS = [
     ("correction", "correction", True),
     ("correction", "preference", True),
-    ("correction", "procedural", True),
-    ("correction", "semantic", True),
+    ("correction", "procedural", False),
+    ("correction", "semantic", False),
     ("correction", "prospective", False),
     ("correction", "praise", False),
     ("preference", "correction", True),
     ("preference", "preference", True),
-    ("preference", "procedural", True),
-    ("preference", "semantic", True),
+    ("preference", "procedural", False),
+    ("preference", "semantic", False),
     ("preference", "prospective", False),
     ("preference", "praise", False),
     ("procedural", "correction", True),
@@ -88,7 +91,7 @@ def standing(merges: bool) -> set[str]:
 @pytest.mark.parametrize("similarity", [0.90, 0.99])
 @pytest.mark.parametrize("subject", [0, 1])
 @pytest.mark.parametrize(("same", "settles"), [(True, False), (False, True)])
-async def test_a_statement_retires_only_into_a_kind_that_lasts_as_long(
+async def test_a_statement_retires_only_into_a_kind_that_keeps_it(
     store, older, newer, merges, similarity, subject, same, settles
 ):
     ids = await pair(store, (OLDER, older), (NEWER, newer), similarity)
@@ -98,7 +101,7 @@ async def test_a_statement_retires_only_into_a_kind_that_lasts_as_long(
 
 
 @pytest.mark.parametrize(("older", "newer", "merges"), KIND_PAIRS, ids=KIND_PAIR_IDS)
-async def test_the_write_retires_only_into_a_kind_that_lasts_as_long(store, older, newer, merges):
+async def test_the_write_retires_only_into_a_kind_that_keeps_it(store, older, newer, merges):
     await pair(store, (OLDER, older), (NEWER, newer), 0.90)
     merged = await merge_message(
         store, FakeJudge(), session_id="s1", entry_id=NEWER, model=MODEL, settings=ACROSS
@@ -108,7 +111,7 @@ async def test_the_write_retires_only_into_a_kind_that_lasts_as_long(store, olde
 
 
 @pytest.mark.parametrize(("older", "newer", "merges"), KIND_PAIRS, ids=KIND_PAIR_IDS)
-async def test_the_pass_retires_only_into_a_kind_that_lasts_as_long(store, older, newer, merges):
+async def test_the_pass_retires_only_into_a_kind_that_keeps_it(store, older, newer, merges):
     await pair(store, (OLDER, older), (NEWER, newer), 0.90)
     passed = await merge_backlog(settings=ACROSS, pool=store, client=FakeJudge())
     assert len(passed.merged) == int(merges)

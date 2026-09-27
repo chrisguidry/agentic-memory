@@ -101,7 +101,7 @@ each.
 A pass with merging across kinds on retired 223 statements, and a judge
 found 11 of 30 sampled merges wrong. In the wrong merges, specific
 statements retired into newer general or approving ones, and 17 statements
-that were not praise retired into praise. Two rules apply on the write
+that were not praise retired into praise. Three rules apply on the write
 and in the pass, in one kind and across kinds:
 
 - A statement retires only into one whose kind lasts at least as long, at
@@ -110,8 +110,14 @@ and in the pass, in one kind and across kinds:
   less, and praise least. When the rule kept only praise apart, a pass
   retired 150 statements, and a judge found 10 of 30 sampled merges wrong.
   In that pass, 17 durable statements retired into prospective, where a
-  rule fades in weeks or ends when a plan's moment passes. `LASTING` in `merge.py` declares the
-  order, because the ranking weighs praise above prospective.
+  rule fades in weeks or ends when a plan's moment passes. `LASTING` in
+  `merge.py` declares the order, because the ranking weighs praise above
+  prospective.
+- A correction or a preference retires only into a correction or a
+  preference. Those are the rules a person states, and in a third pass 8 of
+  the 11 wrong merges retired a stated rule into the narrower fact or step
+  that applied it once. The rule matters only when merging across kinds is
+  on, because otherwise every pair is of one kind.
 - A statement retires into one that says the same thing, by the upper
   cutoff or by the first question, only when that one holds all its
   literals, such as a URL, a flag, a path, a file or host name, a name from
@@ -134,6 +140,26 @@ run with a classify or synthesize call in the ledger, because `/write` and
 recorded are found by a window of time, `--since` to `--until`, which also
 finds the corrections and the sorts in it, so the window needs both ends,
 and the start comes before the end.
+
+### What the passes measured
+
+Three passes ran over the live store on 2026-09-27, each judged by sampling
+30 of its merges, and each was undone.
+
+| pass | guards | retired | judged wrong |
+|---|---|---|---|
+| a | none | 223 | 11 of 30 |
+| b | praise and literals | 150 | 10 of 30 |
+| c | kinds by how long they last, and literals | 131 | 8 to 11 of 30 |
+
+In pass c, merges within one kind were wrong 6 of 12 times and merges across
+kinds 5 of 18, so crossing kinds is not the cause. The question of whether two
+statements say the same thing retires a general rule into one instance of it,
+and a statement into one that lacks part of what it said. The rule for
+stated kinds protects the rules a person gave and leaves those errors within
+one kind, which a stricter first question would have to fix. The store holds no
+retirement from any pass. The writer still merges each new statement under
+the same guards.
 
 ## The contracts
 
@@ -172,7 +198,10 @@ and the start comes before the end.
   fades. A plan that settles a rule differently, such as "cut the next
   release from the hotfix branch" against "releases are cut only from main",
   also leaves both live, and they disagree until the plan ends. When the
-  plan is a decision, the sort writes it again as a durable statement before
-  the merge runs, and that statement retires the rule. Whether the newer
+  plan is a decision, the sort writes it again as a semantic or procedural
+  statement before the merge runs, and that statement retires a semantic or
+  procedural rule. It does not retire a correction or a preference, which
+  retires only into a stated rule, so those two stay live and disagree until
+  the person states the change. Whether the newer
   statement should retire into the older one when the older one lasts
   longer is not settled.

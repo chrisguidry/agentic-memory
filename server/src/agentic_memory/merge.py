@@ -221,12 +221,23 @@ LASTING = {
 }
 
 
+# The kinds a person states as rules. A validation of the merge found
+# corrections and preferences retired into the narrower fact or step that
+# applied them once, which erased the rule. One of these kinds retires only
+# into another stated rule, so a newer preference can still settle an older
+# correction.
+STATED = {"correction", "preference"}
+
+
 def into_shorter(older: Any, newer: Any) -> bool:
     """Whether the older statement would retire into a kind that lasts less.
 
-    A pair where either kind has no entry is kept apart, as though it would.
+    A pair where either kind has no entry is kept apart, as though it would,
+    and so is a stated rule whose survivor is not a stated rule.
     """
     if older["kind"] not in LASTING or newer["kind"] not in LASTING:
+        return True
+    if older["kind"] in STATED and newer["kind"] not in STATED:
         return True
     return LASTING[newer["kind"]] < LASTING[older["kind"]]
 
