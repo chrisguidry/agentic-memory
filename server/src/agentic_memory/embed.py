@@ -25,6 +25,19 @@ log = logging.getLogger("agentic_memory.embed")
 
 BATCH = 256
 
+# The most characters of a prompt the model is given. bge-small reads at most
+# 512 tokens and drops the rest, but it tokenizes the whole text first, and a
+# pasted file of 60,000 characters took 0.3 seconds to tokenize for nothing.
+# The longest word the vocabulary holds as one token is 18 characters, so with
+# the space after it no token covers more than 19, and 512 tokens never cover
+# more than 9,728 characters. Cutting at 10,000 leaves every vector as it was.
+QUERY_CHARACTERS = 10_000
+
+
+def trimmed(text: str) -> str:
+    """A prompt cut to the characters the model can read."""
+    return text[:QUERY_CHARACTERS]
+
 
 class Embedder:
     """One loaded model, and the two ways to use it."""
@@ -38,12 +51,29 @@ class Embedder:
         return [vector.tolist() for vector in self._model.embed(texts, batch_size=64)]
 
     def query(self, text: str) -> list[float]:
-        """The vector for a prompt.
+        """The vector for a prompt, cut to the characters the model can read.
 
         The model prefixes a query and not a document, so a prompt and the
         statements it is compared with go through different calls.
         """
-        return next(iter(self._model.query_embed(text))).tolist()
+        return next(iter(self._model.query_embed(trimmed(text)))).tolist()
+
+    def queries(self, texts: list[str]) -> list[list[float]]:
+        """The vectors for many prompts, in the order given, each as `query` makes it.
+
+        A batch is padded to its longest text, and prompts run from two words to
+        a pasted file, so one long prompt in a batch of short ones made the
+        batch fifteen times slower than embedding each prompt alone. The texts
+        are embedded shortest first, so each batch holds texts of about one
+        length, and the vectors are put back in the order given.
+        """
+        cut = [trimmed(text) for text in texts]
+        order = sorted(range(len(cut)), key=lambda index: len(cut[index]))
+        found = self._model.query_embed([cut[index] for index in order], batch_size=16)
+        vectors: list[list[float]] = [[] for _ in texts]
+        for index, vector in zip(order, found, strict=True):
+            vectors[index] = vector.tolist()
+        return vectors
 
 
 def load(settings: Settings) -> Embedder:

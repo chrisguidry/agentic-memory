@@ -379,6 +379,13 @@ async def classify(
     )
     log.info("read %s %s: %s", session_id, entry_id, verdicts)
 
+    # The turn path compares a new prompt with the prompts already read, so the
+    # prompt is embedded once there is a reading to store the vector on. The
+    # import is local for the reason the writer's is below.
+    from .readings import embed_reading, reading_key
+
+    await docket.add(embed_reading, key=reading_key(session_id, entry_id))(session_id, entry_id)
+
     # A message that cleared no threshold never reaches the larger model, which
     # is where the cost is. The import is here because the writer reads this
     # module for the question set, and a module-level import would be a cycle.

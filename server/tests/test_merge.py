@@ -48,18 +48,6 @@ class FakeJudge:
         return SimpleNamespace(nouls={"same": SimpleNamespace(noul=0.9 if self.yes else 0.1)})
 
 
-class FixedEmbedder:
-    """A model that answers with one vector, for a match the test controls."""
-
-    model = MODEL
-
-    def __init__(self, vector: list[float]):
-        self.vector = vector
-
-    def query(self, text: str) -> list[float]:
-        return self.vector
-
-
 async def held(
     store,
     statement: str,
@@ -256,12 +244,13 @@ class TestAbsent:
         await merge(store, FakeJudge(), statement_id=retired, model=MODEL, settings=CUTOFFS)
         found = await match(
             store,
-            FixedEmbedder(BASE),
+            BASE,
+            model=MODEL,
             seen=(),
             scope_key=SCOPE,
-            prompt="commits",
             limit=5,
             margin=0.0,
+            actionable=0.5,
             now=NOW,
         )
         statements = {row["statement"] for row in found}

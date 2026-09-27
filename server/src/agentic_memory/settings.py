@@ -52,10 +52,11 @@ class Settings(BaseSettings):
     embed_threads: int = 4
     embed_cache: str = ".fastembed"
 
-    # What a turn is handed. A session's first prompt gets the top of its
-    # scope's list, and every prompt after it gets only the statements that are
-    # about what was typed, or nothing.
-    recall_session_limit: int = 10
+    # What a turn is handed. Every prompt gets only the statements that are
+    # about what was typed, or nothing. A session's first prompt also gets the
+    # top of its scope's list, from the statements that have a scope, so the
+    # opening carries the standing rules for where the session is.
+    recall_opening_limit: int = 3
     recall_prompt_limit: int = 5
 
     # How far above the ninety-ninth percentile of the scope's similarities a
@@ -65,6 +66,38 @@ class Settings(BaseSettings):
     # record, so 0.08 is between them and the room is thin. It is a guess until
     # the handouts in `injections` are labelled.
     recall_margin: float = 0.08
+
+    # How sure the System One model has to be that an agent starting new work
+    # would act differently for knowing a statement, before the match hands the
+    # statement out. A statement that has no answer yet is handed as before.
+    # Over 365 statements, the nine below 0.2 were all remarks that some piece
+    # of work went well. Between 0.2 and 0.35 those remarks were mixed with
+    # facts worth handing out, so the threshold is 0.2. It is a guess until the
+    # handed pairs are labelled.
+    recall_actionable: float = 0.2
+
+    # How many of the prompts the classifier read are compared with a new
+    # prompt, and the share of them that held no memory above which the prompt
+    # is handed nothing. A reply with no subject of its own lands among replies
+    # like it, and the classifier found no memory in those. Over a week of 488
+    # prompts, a cutoff of 0.8 on twenty neighbours handed nothing to 42, which
+    # were mostly greetings, replies, and questions about the state of the
+    # work. A cutoff of 0.6 took 104, and among them were requests with a
+    # subject of their own. Both are guesses until the handed pairs are labelled.
+    #
+    # The neighbourhood stays at 40 or under, because pgvector's index returns
+    # at most `hnsw.ef_search` rows, 40 by default, and a neighbourhood the
+    # query cannot fill decides nothing.
+    recall_neighbours: int = 20
+    recall_empty_share: float = 0.8
+
+    # The most words a prompt may have and still be handed nothing for its
+    # neighbours. A request for work holds no memory either, so a long request
+    # has empty neighbours too, and only a short prompt is judged by them. Over
+    # a week, the neighbours silenced 42 prompts. The 25 of 12 words or fewer
+    # were mostly greetings, replies, and questions about the state of the work,
+    # and 4 of them had a subject. Of the 17 longer ones, 10 had a subject.
+    recall_silence_words: int = 12
 
     # Merging statements that say the same thing. The upper cutoff is where two
     # statements are one sentence with a word moved, read over the table at

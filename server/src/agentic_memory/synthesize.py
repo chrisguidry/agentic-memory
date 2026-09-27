@@ -18,6 +18,7 @@ import asyncpg
 import httpx
 from docket import Depends, ExponentialRetry, Shared
 
+from .actionable import answer_message
 from .classify import (
     KIND_COLUMNS,
     MODEL_RETRY,
@@ -452,3 +453,8 @@ async def synthesize(
         )
         if merged:
             log.info("merged %s statements for %s %s", merged, session_id, entry_id)
+    # Answered here rather than by a later pass, so the match can leave out a
+    # statement that changes nothing as soon as the statement exists. Only the
+    # statements with no answer are asked, so a retry after a failure above
+    # answers what the first attempt wrote.
+    await answer_message(pool, judge, session_id=session_id, entry_id=entry_id, run=run)

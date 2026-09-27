@@ -44,6 +44,13 @@ def parser() -> argparse.ArgumentParser:
         help="the store to read, by default AGENTIC_MEMORY_DATABASE_URL",
     )
     found.add_argument(
+        "--exclude-scope",
+        action="append",
+        default=[],
+        metavar="SCOPE",
+        help="leave out the prompts said in this scope or under it; give it again for another",
+    )
+    found.add_argument(
         "--pairs",
         type=Path,
         default=None,
@@ -59,7 +66,11 @@ async def run(arguments: argparse.Namespace) -> str:
     pool = await open_pool(arguments.database_url or settings.database_url)
     try:
         said = await prompts(
-            pool, since=arguments.since, until=arguments.until, as_of=arguments.as_of
+            pool,
+            since=arguments.since,
+            until=arguments.until,
+            as_of=arguments.as_of,
+            excluded=arguments.exclude_scope,
         )
         turns = await replay(pool, embedder, settings, said)
         given = await labels(pool)

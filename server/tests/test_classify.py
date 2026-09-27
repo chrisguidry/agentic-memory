@@ -19,6 +19,7 @@ from agentic_memory.classify import (
     task_key,
     worth_reading,
 )
+from agentic_memory.readings import reading_key
 from agentic_memory.settings import Settings
 from agentic_memory.window import window
 
@@ -151,6 +152,27 @@ class TestTaskKey:
 
     def test_two_sessions_get_two_names(self):
         assert task_key("s1", "e1") != task_key("s2", "e1")
+
+
+class TestEmbeddingTheReading:
+    async def test_a_reading_that_is_written_has_its_prompt_embedded(self):
+        docket = FakeDocket()
+        await classify(
+            "s1", "e9", settings=Settings(), pool=one_round(), client=answering(), docket=docket
+        )
+        assert (reading_key("s1", "e9"), ("s1", "e9")) in docket.scheduled
+
+    async def test_a_reading_that_is_not_written_is_not_embedded(self):
+        docket = FakeDocket()
+        await classify(
+            "s1",
+            "e9",
+            settings=Settings(),
+            pool=one_round(),
+            client=FakeModel(semantic=0.91),
+            docket=docket,
+        )
+        assert docket.scheduled == []
 
 
 class ReadingStore:

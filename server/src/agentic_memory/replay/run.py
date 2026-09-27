@@ -19,6 +19,10 @@ from ..window import NOT_PLUMBING
 # A prompt that arrived after the moment is left out, and so is one said after
 # it. With both cuts, a replay run later against a store that has taken more
 # records reads the same prompts.
+#
+# A prompt said in an excluded scope, or in a scope under one, is left out too,
+# so a week of work on one project does not outweigh the work on the rest. The
+# match is on whole path segments, as a statement's scope is.
 PROMPTS = f"""
     SELECT session_id, entry_id, harness, scope_key, occurred_at, body
     FROM logs
@@ -28,6 +32,10 @@ PROMPTS = f"""
       AND session_id IS NOT NULL
       AND entry_id IS NOT NULL
       AND {NOT_PLUMBING}
+      AND NOT EXISTS (
+          SELECT 1 FROM unnest($4::text[]) AS excluded(scope)
+          WHERE scope_key = excluded.scope OR starts_with(scope_key, excluded.scope || '/')
+      )
     ORDER BY occurred_at, id
 """
 
@@ -53,10 +61,19 @@ class Turn:
 
 
 async def prompts(
-    pool: asyncpg.Pool, *, since: datetime, until: datetime, as_of: datetime
+    pool: asyncpg.Pool,
+    *,
+    since: datetime,
+    until: datetime,
+    as_of: datetime,
+    excluded: Sequence[str] = (),
 ) -> list[Prompt]:
-    """The prompts said in a range, as the record held them at a moment."""
-    found = await pool.fetch(PROMPTS, since, until, as_of)
+    """The prompts said in a range, as the record held them at a moment.
+
+    `excluded` names scopes whose prompts are left out, with every scope under
+    them.
+    """
+    found = await pool.fetch(PROMPTS, since, until, as_of, list(excluded))
     return [
         Prompt(
             session_id=row["session_id"],

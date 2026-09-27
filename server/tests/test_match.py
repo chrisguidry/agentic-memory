@@ -101,15 +101,16 @@ async def filed(store: asyncpg.Pool, embedder: Embedder, vectors) -> asyncpg.Poo
     return store
 
 
-async def matched(store, embedder, prompt, seen=(), limit=5, margin=0.05):
+async def matched(store, embedder, prompt, seen=(), limit=5, margin=0.05, actionable=0.5):
     found = await match(
         store,
-        embedder,
+        embedder.query(prompt),
+        model=embedder.model,
         seen=seen,
         scope_key=SCOPE,
-        prompt=prompt,
         limit=limit,
         margin=margin,
+        actionable=actionable,
         now=NOW,
     )
     return [row["statement"] for row in found]
@@ -161,6 +162,33 @@ class TestMatch:
         found = await matched(filed, embedder, "how do the tests get a fresh postgres database?")
         assert found[0].endswith("from a template.")
 
+    @pytest.mark.parametrize(
+        "answer, handed",
+        [(None, True), (0.2, False), (0.5, True), (0.9, True)],
+        ids=["unanswered", "below", "at", "above"],
+    )
+    async def test_a_statement_is_handed_only_when_it_clears_the_actionable_threshold(
+        self, filed, embedder, answer, handed
+    ):
+        await filed.execute(
+            "UPDATE memories SET actionable = $2 WHERE statement = $1", ABOUT[0], answer
+        )
+        found = await matched(filed, embedder, "how do the tests talk to postgres?", actionable=0.5)
+        assert (ABOUT[0] in found) == handed
+
+    async def test_a_statement_below_the_threshold_still_counts_toward_the_baseline(
+        self, filed, embedder
+    ):
+        # The baseline measures how close the whole scope is to the prompt, so it
+        # does not move when the threshold does. Without the hundred statements
+        # below the threshold, five would be left, which is too few for a
+        # baseline, and nothing would be handed.
+        await filed.execute(
+            "UPDATE memories SET actionable = 0.0 WHERE statement <> ALL($1::text[])", list(ABOUT)
+        )
+        found = await matched(filed, embedder, "how do the tests talk to postgres?")
+        assert found[0] == ABOUT[0]
+
 
 class TestBaseline:
     def test_a_large_scope_uses_its_ninety_ninth_percentile(self):
@@ -181,7 +209,7 @@ class TestTurn:
         found = await turn(
             store,
             embedder,
-            Settings(recall_session_limit=3),
+            Settings(recall_opening_limit=3),
             session_id=session_id,
             harness="pi",
             scope_key=SCOPE,
@@ -192,6 +220,18 @@ class TestTurn:
 
     async def test_a_sessions_first_ask_is_handed_the_top_of_the_list(self, filed, embedder):
         found = await self.asked(filed, embedder, "what rhymes with orange?")
+        assert len(found) == 3
+
+    async def test_a_sessions_first_ask_is_matched_as_well(self, filed, embedder):
+        found = await self.asked(filed, embedder, "how do the tests talk to postgres?")
+        assert found[0] == ABOUT[0]
+        assert len(found) > 3
+
+    async def test_a_statement_with_no_scope_is_never_on_the_opening_list(self, filed, embedder):
+        # The newest statement, so it would head the list if the list took it.
+        await held(filed, "Tabs are wider than spaces.", scope_key=None, age_in_days=-1)
+        found = await self.asked(filed, embedder, "what rhymes with orange?")
+        assert "Tabs are wider than spaces." not in found
         assert len(found) == 3
 
     async def test_a_later_ask_is_handed_only_what_matches(self, filed, embedder):
@@ -213,6 +253,22 @@ class TestTurn:
     async def test_an_empty_prompt_after_the_first_ask_is_handed_nothing(self, filed, embedder):
         await self.asked(filed, embedder, "hello")
         assert await self.asked(filed, embedder, "   ") == []
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "<task-notification>a background task finished</task-notification>",
+            "Base directory for this skill: /somewhere",
+            "Stop hook feedback: the tests did not run",
+        ],
+    )
+    async def test_a_prompt_the_harness_wrote_is_handed_nothing(self, filed, embedder, prompt):
+        assert await self.asked(filed, embedder, prompt) == []
+
+    async def test_a_prompt_the_harness_wrote_marks_nothing_seen(self, filed, embedder):
+        await self.asked(filed, embedder, "<task-notification>done</task-notification>")
+        assert await handed(filed, session_id="turn-1") == []
+        assert len(await self.asked(filed, embedder, "what rhymes with orange?")) == 3
 
 
 class TestEmbedding:
@@ -237,5 +293,6 @@ class TestEmbedding:
     async def test_the_settings_name_the_model_and_the_limits(self):
         settings = Settings()
         assert settings.embed_model and settings.embed_threads > 0
-        assert settings.recall_session_limit > settings.recall_prompt_limit > 0
+        assert settings.recall_opening_limit > 0 and settings.recall_prompt_limit > 0
         assert 0 < settings.recall_margin < 1
+        assert 0 < settings.recall_actionable < 1

@@ -49,10 +49,6 @@ turn the record into memory. A worker reads a window of a session, asks a
 cheap model which kinds of memory are in it, and writes down the
 probabilities. No memory is written.
 
-* [10, The opening and the filters](10-the-opening-and-the-filters.md).
-  A session's first prompt is matched like every other, statements with no
-  scope arrive only through the match, and two answers written off the turn
-  path keep replies and remarks out of it.
 * [11, Commitments](11-commitments.md). Prospective narrows to commitments
   with a condition that ends them, decisions move to the kinds that last,
   and the state of the work is not written.
@@ -60,8 +56,8 @@ probabilities. No memory is written.
   statements of every kind and retires one that a newer one changes, then
   the corpus is read again under the questions from 10 and 11.
 
-10, 11, and 12 are measured with the replay and the labels from 08. 12 runs after 10 and 11, so the corpus is read
-again once.
+11 and 12 are measured with the replay and the labels from 08. 12 runs
+after 11, so the corpus is read again once.
 
 Nothing after 12 is written. The design says where the work can go, and a
 plan is written when the work is about to start. A plan written now for a
@@ -76,6 +72,7 @@ step six months out would be a guess with a number on it.
 * [07, The bastion](completed/07-the-bastion.md). Closed 2026-09-22.
 * [08, The replay](completed/08-the-replay.md). Closed 2026-09-27.
 * [09, The retries](completed/09-the-retries.md). Closed 2026-09-27.
+* [10, The opening and the filters](completed/10-the-opening-and-the-filters.md). Closed 2026-09-27.
 
 01 and 02 describe the record and the classifier, and both are built.
 They were built before this section was kept, so neither was moved here

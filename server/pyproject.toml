@@ -20,6 +20,7 @@ agentic-memory = "agentic_memory.app:main"
 agentic-memory-worker = "agentic_memory.worker:main"
 agentic-memory-replay = "agentic_memory.replay.command:main"
 agentic-memory-sample = "agentic_memory.labels:main"
+agentic-memory-backfill = "agentic_memory.backfill:main"
 
 [dependency-groups]
 dev = [
@@ -53,6 +54,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 "src/agentic_memory/embed.py" = ["B008"]
 "src/agentic_memory/merge.py" = ["B008"]
 "src/agentic_memory/sweep.py" = ["B008"]
+"src/agentic_memory/readings.py" = ["B008"]
 
 [tool.pytest.ini_options]
 # The tasks are async, and a test of one should not need a decorator to say so.

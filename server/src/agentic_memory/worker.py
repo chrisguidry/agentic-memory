@@ -12,6 +12,7 @@ from docket import Docket, Worker
 from .classify import classify
 from .embed import embed_statements
 from .merge import merge_statements
+from .readings import embed_reading
 from .settings import get_settings
 from .sweep import sweep_failures
 from .synthesize import synthesize
@@ -24,7 +25,14 @@ log = logging.getLogger("agentic_memory.worker")
 # sweep_failures is Perpetual and automatic: registering it here is what
 # schedules it, at startup and again if its chain is ever lost, with no call
 # to docket.add of its own.
-TASKS = (classify, synthesize, embed_statements, merge_statements, sweep_failures)
+TASKS = (
+    classify,
+    synthesize,
+    embed_statements,
+    embed_reading,
+    merge_statements,
+    sweep_failures,
+)
 
 
 async def serve() -> None:

@@ -249,6 +249,16 @@ class TestRetries:
         assert found[0]["error_type"] == "RuntimeError"
 
 
+class IdleDocket:
+    """A docket that takes what a task schedules and runs none of it."""
+
+    def add(self, task, *, key=None):
+        async def scheduled(*args):
+            return None
+
+        return scheduled
+
+
 class TestRun:
     async def test_a_named_run_travels_to_the_row(self, store):
         client = RecordedSystemOne(FakeSystemOne(answered()), store)
@@ -283,6 +293,7 @@ class TestRun:
             settings=Settings(),
             pool=pool,
             client=client,
+            docket=IdleDocket(),
         )
         (row,) = await rows(store)
         assert row["task"] == "classify"

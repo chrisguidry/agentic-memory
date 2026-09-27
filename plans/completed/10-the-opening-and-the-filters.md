@@ -1,5 +1,7 @@
 # 10, The opening and the filters
 
+Closed 2026-09-27.
+
 ## The problem
 
 A session's first prompt is handed the top ten statements of its scope,
@@ -138,3 +140,51 @@ nothing seen.
   with no subject gets nothing under this plan. Matching the last exchange
   instead of the reply is the other answer, and the replay can compare the
   two.
+
+## What the drill measured
+
+The replay ran over 2026-09-21 to 2026-09-28, as of 2026-09-27T14:00Z,
+against a local restore of the homelab store. Sessions in the scope of this
+service were left out, because that week was mostly work on the service
+itself. That leaves 488 turns.
+
+| | handed nothing | statements, per turn | with no scope |
+|---|---|---|---|
+| before | 345 | 636, 1.30 | 332, 52.2 percent |
+| after | 356 | 281, 0.58 | 39, 13.9 percent |
+
+Most of the drop is the opening list, which went from ten statements that
+included ones with no scope to three that all have one. Matched turns barely
+moved: 92 handed at 1.37 statements each before, and 77 at 1.38 after.
+Preferences handed fell from 360 to 62.
+
+The prompt filter silences a prompt when at least 0.8 of its 20 nearest
+classified prompts held no memory. A request with a subject usually holds no
+memory either, so the filter applies only to a prompt of 12 words or fewer.
+Without that limit it silenced 42 prompts, 14 of which had a subject. With
+it, it silences 25, and 4 have a subject: two questions the person asked
+about themselves, one question about a release, and one bug report that is
+a path.
+
+The statement filter hands out a statement only when Jev answers at least
+0.2 to whether an agent starting new work would act differently for knowing
+it. Over 365 statements, the nine below 0.2 were all remarks that some work
+went well. Praise handed fell from 27 to 21. Jev's answers to this question
+run low, so a fact worth handing out can score 0.23.
+
+Both thresholds are provisional. They were set by reading the replay, and
+plan 08's labels set them when enough pairs are labelled.
+
+On the turn path, embedding a prompt took 5.9 ms at the median and 12.3 ms
+at the ninetieth percentile, the new query for the nearest readings took
+1.8 ms and 2.6 ms, and the query for the nearest statements took 8.8 ms and
+13.5 ms. A prompt is cut to 10,000 characters before it is embedded. The
+longest token in the model's vocabulary covers 19 characters with its
+space, so 512 tokens never cover more than 9,728, and the cut changes no
+vector.
+
+Answering the statement question for the 3,197 live statements takes about
+1.5 million input tokens and two minutes. Embedding the 6,687 readings'
+prompts takes about five minutes on a laptop. A batch of 256 long prompts
+held 816 MB at its peak, so a pod with a small memory limit runs the
+backfill with `--batch`.

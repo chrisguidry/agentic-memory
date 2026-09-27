@@ -1,7 +1,8 @@
-"""What a turn is handed, and the record of the handout.
+"""The opening list: the top of a scope's list, handed to a session's first ask.
 
-These run against the store, because the read is one query that has to leave
-out what a session already saw, and the write has to say exactly what went.
+These run against the store, because the list is one query that has to reach
+the scopes above the session's, leave out what has no scope, and leave out what
+the session already saw.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -9,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 import asyncpg
 import pytest
 
-from agentic_memory.recall import LIMIT, handed, recall
+from agentic_memory.recall import LIMIT, opening
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
 
@@ -37,14 +38,12 @@ async def held(
     )
 
 
-async def statements(store, session_id="turn-1", scope_key="github.com/liken-sh/liken", limit=10):
-    found = await recall(
-        store, session_id=session_id, harness="pi", scope_key=scope_key, limit=limit, now=NOW
-    )
+async def statements(store, scope_key="github.com/liken-sh/liken", seen=(), limit=10):
+    found = await opening(store, scope_key=scope_key, seen=seen, limit=limit, now=NOW)
     return [row["statement"] for row in found]
 
 
-class TestRecall:
+class TestOpening:
     @pytest.fixture
     async def filed(self, store: asyncpg.Pool) -> asyncpg.Pool:
         await held(store, None, "everywhere")
@@ -53,55 +52,35 @@ class TestRecall:
         await held(store, "github.com/other/thing", "elsewhere")
         return store
 
-    async def test_a_turn_is_handed_what_reaches_its_scope(self, filed):
-        assert set(await statements(filed)) == {"everywhere", "the org", "the repo"}
+    async def test_the_list_holds_what_reaches_the_scope(self, filed):
+        assert set(await statements(filed)) == {"the org", "the repo"}
 
     async def test_the_order_is_the_rank(self, store):
-        await held(store, None, "a plan", kind="prospective")
-        await held(store, None, "an old rule", age_in_days=400)
-        await held(store, None, "a fresh rule")
+        await held(store, "github.com/liken-sh", "a plan", kind="prospective")
+        await held(store, "github.com/liken-sh", "an old rule", age_in_days=400)
+        await held(store, "github.com/liken-sh", "a fresh rule")
         assert await statements(store) == ["a fresh rule", "an old rule", "a plan"]
 
-    async def test_a_second_turn_of_the_same_session_is_not_handed_the_same_again(self, filed):
-        first = await statements(filed)
-        assert first
-        assert await statements(filed) == []
+    async def test_what_the_session_saw_is_left_off(self, filed):
+        org = await filed.fetchval("SELECT id FROM memories WHERE statement = 'the org'")
+        assert await statements(filed, seen={org}) == ["the repo"]
 
-    async def test_what_a_session_missed_arrives_on_its_next_turn(self, filed):
-        assert len(await statements(filed, limit=2)) == 2
-        assert len(await statements(filed, limit=2)) == 1
-        assert await statements(filed, limit=2) == []
+    async def test_a_statement_with_no_scope_is_left_off_the_list(self, filed):
+        # A statement that holds everywhere reaches a session through the match,
+        # which reads the prompt, and the list is only for where the session is.
+        assert "everywhere" not in await statements(filed)
 
-    async def test_a_different_session_gets_the_whole_list(self, filed):
-        await statements(filed, session_id="turn-1")
-        assert len(await statements(filed, session_id="turn-2")) == 3
-
-    async def test_a_handout_is_recorded_with_what_went(self, filed):
-        found = await recall(
-            filed, session_id="turn-1", harness="pi", scope_key="github.com/liken-sh", limit=10
-        )
-        [record] = await handed(filed, session_id="turn-1")
-        assert record["memory_ids"] == [row["id"] for row in found]
-        assert record["harness"] == "pi"
-        assert record["scope_key"] == "github.com/liken-sh"
-
-    async def test_nothing_is_recorded_when_nothing_went(self, filed):
-        await statements(filed, scope_key="codeberg.org/nobody/nothing")
-        assert len(await handed(filed, session_id="turn-1")) == 1
-        await statements(filed, scope_key="codeberg.org/nobody/nothing")
-        assert len(await handed(filed, session_id="turn-1")) == 1
-
-    async def test_no_scope_reaches_only_what_holds_everywhere(self, filed):
-        assert await statements(filed, scope_key=None) == ["everywhere"]
+    async def test_a_session_with_no_scope_has_no_list(self, filed):
+        assert await statements(filed, scope_key=None) == []
 
     async def test_the_limit_is_capped(self, store):
         for n in range(LIMIT + 5):
-            await held(store, None, f"rule {n}")
+            await held(store, "github.com/liken-sh", f"rule {n}")
         assert len(await statements(store, limit=LIMIT + 5)) == LIMIT
 
-    async def test_a_retired_statement_is_not_handed_out(self, store):
-        old = await held(store, None, "the old way")
-        new = await held(store, None, "the new way")
+    async def test_a_retired_statement_is_left_off(self, store):
+        old = await held(store, "github.com/liken-sh", "the old way")
+        new = await held(store, "github.com/liken-sh", "the new way")
         await store.execute(
             "UPDATE memories SET superseded_by = $2, superseded_at = now() WHERE id = $1", old, new
         )

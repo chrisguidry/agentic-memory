@@ -329,6 +329,20 @@ ALTER TABLE memories ADD COLUMN IF NOT EXISTS actor_depth integer;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding vector(384);
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding_model text;
 
+-- The System One model's probability that an agent starting new work in the
+-- statement's place would act differently for knowing it. The match hands out
+-- only a statement that clears a threshold, and a statement with no answer yet
+-- is handed as before. The ranking, the merge, and the opening list read every
+-- live statement whatever its answer.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS actionable real;
+
+-- The embedding of the prompt a reading judged, and the model that produced
+-- it. A new prompt is compared with these, and when most of its nearest
+-- readings held no memory, the turn is handed nothing. The model embeds a
+-- prompt the same way at turn time, so the two vectors are comparable.
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS prompt_embedding vector(384);
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS prompt_embedding_model text;
+
 -- One statement per message per kind per question set, so a retry writes
 -- nothing and one message can carry a fact and a rule at once.
 CREATE UNIQUE INDEX IF NOT EXISTS memories_source
@@ -347,6 +361,11 @@ CREATE INDEX IF NOT EXISTS memories_live
 CREATE INDEX IF NOT EXISTS memories_embedding
     ON memories USING hnsw (embedding vector_cosine_ops)
     WHERE superseded_by IS NULL;
+
+-- The nearest readings to a prompt, which the turn path reads on every prompt.
+CREATE INDEX IF NOT EXISTS classifications_prompt_embedding
+    ON classifications USING hnsw (prompt_embedding vector_cosine_ops)
+    WHERE prompt_embedding IS NOT NULL;
 
 -- The ranking is computed from the kind and the age rather than read from a
 -- column, so the indexes the old ordering needed are gone.

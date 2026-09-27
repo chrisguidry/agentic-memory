@@ -30,7 +30,13 @@ def text(key: str, value: str) -> dict:
 
 
 async def said(
-    store: asyncpg.Pool, session: str, entry: str, body: str, at: datetime, kind: str = "prompt"
+    store: asyncpg.Pool,
+    session: str,
+    entry: str,
+    body: str,
+    at: datetime,
+    kind: str = "prompt",
+    scope: str = SCOPE,
 ) -> None:
     """One prompt in the record, as a harness sends it."""
     record = {
@@ -41,7 +47,7 @@ async def said(
             text("agentic_memory.entry.id", entry),
             text("agentic_memory.kind", kind),
             text("gen_ai.agent.name", "claude-code"),
-            text("agentic_memory.scope", SCOPE),
+            text("agentic_memory.scope", scope),
         ],
     }
     payload = {"resourceLogs": [{"resource": {}, "scopeLogs": [{"logRecords": [record]}]}]}
@@ -82,8 +88,9 @@ async def replayed(
     until: datetime = MONDAY + timedelta(days=7),
     as_of: datetime = LATER,
     settings: Settings | None = None,
+    excluded: tuple[str, ...] = (),
 ):
-    found = await prompts(store, since=MONDAY, until=until, as_of=as_of)
+    found = await prompts(store, since=MONDAY, until=until, as_of=as_of, excluded=excluded)
     return await replay(store, embedder, settings or Settings(), found)
 
 
@@ -138,6 +145,24 @@ async def test_a_prompt_that_arrived_after_the_moment_is_not_replayed(week, embe
 
 
 @pytest.mark.parametrize(
+    "excluded, expected",
+    [
+        ((), ["a1", "b1"]),
+        (("example.test/acme/widget",), ["b1"]),
+        (("example.test/acme",), ["b1"]),
+        (("example.test/acme/wid",), ["a1", "b1"]),
+        (("example.test/acme/widget", "example.test/other"), []),
+    ],
+    ids=["nothing", "the-scope", "above-it", "a-prefix-of-a-segment", "two-scopes"],
+)
+async def test_a_prompt_in_an_excluded_scope_is_not_replayed(store, embedder, excluded, expected):
+    await said(store, "a", "a1", "rename the widget", MONDAY, scope="example.test/acme/widget")
+    await said(store, "b", "b1", "tune the gadget", MONDAY, scope="example.test/other/gadget")
+    turns = await replayed(store, embedder, excluded=excluded)
+    assert [turn.prompt.entry_id for turn in turns] == expected
+
+
+@pytest.mark.parametrize(
     "created, retired, expected",
     [
         (MONDAY - timedelta(days=1), None, ["the rule"]),
@@ -170,7 +195,7 @@ async def embedded(store: asyncpg.Pool, embedder: Embedder) -> asyncpg.Pool:
 
 # No margin, so every statement above the baseline is handed unless the
 # session was already handed it.
-OPEN_HANDED = Settings(recall_margin=0.0, recall_session_limit=12)
+OPEN_HANDED = Settings(recall_margin=0.0, recall_opening_limit=12)
 
 
 async def test_what_a_session_was_handed_is_not_handed_to_it_again(embedded, embedder):
@@ -199,3 +224,29 @@ async def test_the_command_prints_the_report_and_writes_the_pairs(week, postgres
     rule = await week.fetchval("SELECT id FROM memories")
     assert "turns                   3" in report.splitlines()
     assert written.read_text().splitlines() == [f"a\ta1\t{rule}", f"b\tb1\t{rule}"]
+
+
+def test_the_command_takes_more_than_one_scope_to_exclude():
+    arguments = parser().parse_args(
+        [
+            "--since=2026-09-21",
+            "--until=2026-09-28",
+            "--as-of=2026-09-27",
+            "--exclude-scope=example.test/acme",
+            "--exclude-scope=example.test/other",
+        ]
+    )
+    assert arguments.exclude_scope == ["example.test/acme", "example.test/other"]
+
+
+async def test_the_command_leaves_out_an_excluded_scope(week, postgres_url):
+    arguments = parser().parse_args(
+        [
+            "--since=2026-09-21",
+            "--until=2026-09-28",
+            f"--as-of={LATER.isoformat()}",
+            f"--database-url={postgres_url}",
+            f"--exclude-scope={SCOPE}",
+        ]
+    )
+    assert "turns                   0" in (await run(arguments)).splitlines()

@@ -93,7 +93,7 @@ def summarize(turns: Sequence[Turn], given: dict[Pair, str]) -> Report:
     report = Report(forms={"opening": Counts(), "match": Counts()})
     for turn in turns:
         handed = turn.handout.statements
-        form = report.forms[turn.handout.form]
+        form = report.forms.setdefault(turn.handout.form, Counts())
         form.turns += 1
         form.handed += bool(handed)
         form.statements += len(handed)

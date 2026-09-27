@@ -1,10 +1,15 @@
 """The turn path: what a session is handed, and the record of it.
 
-A turn starts, the client asks, and this answers in one of two forms. A
-session's first ask is handed the top of its scope's list, best first. Every
-ask after it is handed only the statements that are about the prompt, found
-by `match`, or nothing. Both leave out what the session was already handed.
-Each form is two reads and one write, because a person is waiting.
+A turn starts, the client asks, and this answers. Every prompt is handed only
+the statements that are about it, found by `match`, or nothing. A session's
+first ask is also handed the top of its scope's list, from the statements that
+have a scope. Both leave out what the session was already handed. No model is
+called over a network here: the prompt is embedded in the process, and the rest
+is reads of answers the worker wrote earlier, because a person is waiting.
+
+Two filters come before the match. A prompt the harness wrote for itself is
+handed nothing, and so is a short prompt whose nearest readings mostly held no
+memory, which is how a reply with no subject of its own is recognised.
 
 The handout is recorded by session so that two things can follow from it. A
 statement the session already saw is not sent again, because the injected
@@ -13,6 +18,7 @@ is built, joins what a turn cost and whether it worked to what the turn was
 handed, which is the only way the ranking learns.
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,7 +30,9 @@ from .embed import Embedder
 from .match import match
 from .memories import live_at, ranked
 from .metrics import RECALLS, phase
+from .readings import holds_nothing, short
 from .settings import Settings
+from .window import plumbing
 
 # The most statements one turn is handed. A turn's budget is the model's
 # context, and past a few dozen sentences the injection is the conversation.
@@ -40,20 +48,20 @@ SEEN = """
     WHERE session_id = $1
 """
 
-# The reachable slice at a moment, less what this session was already handed.
+# The scope's list at a moment, less what this session was already handed.
 #
-# A turn with no scope is a session outside any project, and it is handed only
-# what holds everywhere. That differs from a person reading the whole table from
-# no scope, which is what `memories.REACHABLE` answers, so the predicate is its
-# own rather than that one.
+# Only statements with a scope are on it, so the opening carries the standing
+# rules for where the session is. A statement with no scope reaches a session
+# only through the match, which reads the prompt. Without this, the same few
+# statements with no scope, which rank high by kind, would open nearly every
+# session whatever it is about. A session with no scope has no list.
 UNSEEN = f"""
     SELECT id, statement, kind, score, scope_key, session_id, entry_id,
            model, said_at, created_at, actor, actor_depth
     FROM memories
     WHERE {live_at("$3")}
-      AND (scope_key IS NULL
-           OR scope_key = $1
-           OR starts_with($1, scope_key || '/'))
+      AND scope_key IS NOT NULL
+      AND (scope_key = $1 OR starts_with($1, scope_key || '/'))
       AND NOT (id = ANY($2::bigint[]))
 """
 
@@ -70,10 +78,12 @@ HANDED = """
     LIMIT $2
 """
 
-# The two forms a turn takes. `opening` is the top of the scope's list, for a
-# session that has been handed nothing yet, and `match` is the statements about
-# the prompt, for every ask after that.
-Form = Literal["opening", "match"]
+# The forms a turn takes. `opening` is a session that has been handed nothing
+# yet, which is handed the statements about the prompt and the top of the
+# scope's list. `match` is every ask after that, handed only the statements
+# about the prompt. `plumbing` is a prompt the harness wrote for itself, which is
+# handed nothing.
+Form = Literal["opening", "match", "plumbing"]
 
 
 @dataclass(frozen=True)
@@ -125,32 +135,43 @@ async def choose(
     `now` is the moment the statements are aged to, and `as_of` is the moment
     the table is read at. A live turn reads the table as it is. A replay reads
     it as it stood when the prompt was said.
+
+    A short prompt whose nearest readings mostly held no memory is handed
+    nothing, the opening list included, so a session that opens with a reply gets its
+    list on the first prompt that has a subject.
     """
     form = form_for(seen)
-    if form == "opening":
-        chosen = await opening(
+    matched: list[dict] = []
+    if prompt.strip():
+        with phase("embed"):
+            vector = await asyncio.to_thread(embedder.query, prompt)
+        if short(prompt, settings.recall_silence_words) and await holds_nothing(
+            pool, vector, model=embedder.model, settings=settings, as_of=as_of
+        ):
+            return Handout(form, [])
+        matched = await match(
             pool,
-            scope_key=scope_key,
+            vector,
+            model=embedder.model,
             seen=seen,
-            limit=settings.recall_session_limit,
+            scope_key=scope_key,
+            limit=settings.recall_prompt_limit,
+            margin=settings.recall_margin,
+            actionable=settings.recall_actionable,
             now=now,
             as_of=as_of,
         )
-        return Handout(form, chosen)
-    if not prompt.strip():
-        return Handout(form, [])
-    chosen = await match(
+    if form == "match":
+        return Handout(form, matched)
+    listed = await opening(
         pool,
-        embedder,
-        seen=seen,
         scope_key=scope_key,
-        prompt=prompt,
-        limit=settings.recall_prompt_limit,
-        margin=settings.recall_margin,
+        seen=[*seen, *(row["id"] for row in matched)],
+        limit=settings.recall_opening_limit,
         now=now,
         as_of=as_of,
     )
-    return Handout(form, chosen)
+    return Handout(form, matched + listed)
 
 
 async def record(
@@ -170,26 +191,6 @@ async def record(
             )
 
 
-async def recall(
-    pool: asyncpg.Pool,
-    *,
-    session_id: str,
-    harness: str,
-    scope_key: str | None,
-    limit: int = LIMIT,
-    now: datetime | None = None,
-) -> list[dict]:
-    """The top of the scope's list, less what the session saw, and the record of it."""
-    moment = now or datetime.now(UTC)
-    chosen = await opening(
-        pool, scope_key=scope_key, seen=await seen_by(pool, session_id), limit=limit, now=moment
-    )
-    await record(
-        pool, chosen, session_id=session_id, harness=harness, scope_key=scope_key, moment=moment
-    )
-    return chosen
-
-
 async def turn(
     pool: asyncpg.Pool,
     embedder: Embedder,
@@ -202,7 +203,7 @@ async def turn(
     now: datetime | None = None,
     waiting: Callable[[], Awaitable[bool]] | None = None,
 ) -> Handout:
-    """What this turn is handed: the opening list on a session's first ask, a match after.
+    """What this turn is handed: the match, and the opening list on a session's first ask.
 
     `waiting` says whether the client is still waiting for the answer. A
     statement recorded for a client that stopped waiting never reached the
@@ -210,6 +211,13 @@ async def turn(
     so a handout is recorded only while the client waits.
     """
     moment = now or datetime.now(UTC)
+    # A harness writes its own entries as prompts: a task notification, a
+    # skill's body, a Stop hook's feedback. The classifier does not read them,
+    # and a statement handed to one would be marked seen and never reach the
+    # session again, so one is handed nothing before anything is read.
+    if plumbing(prompt):
+        RECALLS.labels(form="plumbing", outcome="nothing").inc()
+        return Handout("plumbing", [])
     # A recall that fails before it reads what the session was handed has no
     # form yet, and its error is counted under this one.
     form = "unknown"

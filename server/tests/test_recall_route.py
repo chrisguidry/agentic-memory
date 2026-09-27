@@ -31,7 +31,8 @@ async def service(store: asyncpg.Pool, embedder: Embedder) -> AsyncIterator[str]
         INSERT INTO memories
             (statement, kind, score, scope_key, session_id, entry_id, model,
              questions_fingerprint, said_at, actor, actor_depth)
-        VALUES ('Tests come before code here.', 'preference', 0.9, NULL, 's1', 'e1',
+        VALUES ('Tests come before code here.', 'preference', 0.9, 'example.test/acme/widget',
+                's1', 'e1',
                 'jev-1.13.0', 'fp', now(), 'human', 0)
         """
     )
@@ -113,7 +114,9 @@ async def scraped(service: str) -> AsyncIterator[str]:
         yield (await client.get("/metrics")).text
 
 
-@pytest.mark.parametrize("phase", ["seen", "opening", "record", "embed", "nearest", "request"])
+@pytest.mark.parametrize(
+    "phase", ["seen", "opening", "record", "embed", "neighbours", "nearest", "request"]
+)
 async def test_a_scrape_has_the_time_of_each_phase(scraped: str, phase: str):
     assert f'agentic_memory_recall_seconds_count{{phase="{phase}"}}' in scraped
 
