@@ -30,9 +30,12 @@ spec:
                 name: agentic-memory
             - secretRef:
                 name: agentic-memory
+          # The embedding model is resident, about 275 MB, and a backfill run
+          # with `kubectl exec` loads a second copy beside it. Both backfills
+          # together reached 970 Mi, so the limit leaves room for that.
           resources:
             requests:
               cpu: 100m
               memory: 384Mi
             limits:
-              memory: 1Gi
+              memory: 1536Mi

@@ -28,8 +28,21 @@ type Ask struct {
 	Missed    int    `json:"missed"`
 }
 
+// probe is the body of `POST /recall/probe`: the ask without a count, and what
+// the bastion handed the probe session before. The service records nothing
+// for a probe, so Seen is the only record of what the session already has.
+type probe struct {
+	SessionID string  `json:"session_id"`
+	Harness   string  `json:"harness"`
+	ScopeKey  string  `json:"scope_key"`
+	Prompt    string  `json:"prompt"`
+	Limit     int     `json:"limit"`
+	Seen      []int64 `json:"seen,omitempty"`
+}
+
 // Statement is one thing an earlier session said, with where it came from.
 type Statement struct {
+	ID         int64  `json:"id"`
 	Statement  string `json:"statement"`
 	Kind       string `json:"kind"`
 	ScopeKey   string `json:"scope_key"`
@@ -61,7 +74,7 @@ func (c *Client) Statements(ctx context.Context, ask Ask) ([]Statement, error) {
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
 		WroteRequest: func(info httptrace.WroteRequestInfo) { wrote.Store(info.Err == nil) },
 	})
-	statements, err := c.ask(ctx, ask)
+	statements, err := c.ask(ctx, "/recall", ask)
 	if !wrote.Load() {
 		c.missed.Add(int64(ask.Missed))
 	}
@@ -71,12 +84,30 @@ func (c *Client) Statements(ctx context.Context, ask Ask) ([]Statement, error) {
 	return statements, err
 }
 
-func (c *Client) ask(ctx context.Context, ask Ask) ([]Statement, error) {
-	body, err := json.Marshal(ask)
+// Probe returns what a live ask would be handed, from the service's probe
+// route, which records nothing. Seen is what the bastion handed this probe
+// session before.
+//
+// A probe that runs out of time is not counted, and a probe carries no count,
+// so the count the next live ask sends holds only live misses. A service that
+// has no probe route answers 404, and the probe gets no memory.
+func (c *Client) Probe(ctx context.Context, ask Ask, seen []int64) ([]Statement, error) {
+	return c.ask(ctx, "/recall/probe", probe{
+		SessionID: ask.SessionID,
+		Harness:   ask.Harness,
+		ScopeKey:  ask.ScopeKey,
+		Prompt:    ask.Prompt,
+		Limit:     ask.Limit,
+		Seen:      seen,
+	})
+}
+
+func (c *Client) ask(ctx context.Context, route string, question any) ([]Statement, error) {
+	body, err := json.Marshal(question)
 	if err != nil {
 		return nil, err
 	}
-	address := strings.TrimSuffix(c.Service, "/") + "/recall"
+	address := strings.TrimSuffix(c.Service, "/") + route
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, address, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

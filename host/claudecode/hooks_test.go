@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -22,8 +23,8 @@ const session = "11111111-2222-3333-4444-555555555555"
 
 var now = time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 
-// service answers the two routes the bastion asks of it, and keeps what it was
-// sent. It refuses transcripts while `refusing` is set.
+// service answers the three routes the bastion asks of it, and keeps what it
+// was sent. It refuses transcripts while `refusing` is set.
 type service struct {
 	*httptest.Server
 	statements []recall.Statement
@@ -31,7 +32,14 @@ type service struct {
 	mu        sync.Mutex
 	shipments int
 	asks      []recall.Ask
+	probes    []probed
 	refusing  bool
+}
+
+// probed is the part of a probe's body a test reads.
+type probed struct {
+	SessionID string  `json:"session_id"`
+	Seen      []int64 `json:"seen"`
 }
 
 func newService(t *testing.T, statements ...recall.Statement) *service {
@@ -43,6 +51,14 @@ func newService(t *testing.T, statements ...recall.Statement) *service {
 		json.NewDecoder(r.Body).Decode(&ask)
 		found.mu.Lock()
 		found.asks = append(found.asks, ask)
+		found.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"statements": found.statements})
+	})
+	routes.HandleFunc("POST /recall/probe", func(w http.ResponseWriter, r *http.Request) {
+		var probe probed
+		json.NewDecoder(r.Body).Decode(&probe)
+		found.mu.Lock()
+		found.probes = append(found.probes, probe)
 		found.mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"statements": found.statements})
 	})
@@ -88,8 +104,8 @@ func transcript(t *testing.T) string {
 	return path
 }
 
-// newHooks builds the route and puts it behind a server, so a test speaks to
-// it the way `agentic-memory claude` does.
+// newHooks builds both routes and puts them behind a server, so a test speaks
+// to them the way `agentic-memory claude` does.
 func newHooks(t *testing.T, at *service, open transcripts.Opener) (*httptest.Server, *transcripts.Shipper) {
 	t.Helper()
 	shipper := &transcripts.Shipper{
@@ -108,7 +124,11 @@ func newHooks(t *testing.T, at *service, open transcripts.Opener) (*httptest.Ser
 		Deadline: 2 * time.Second,
 		Now:      func() time.Time { return now },
 	}
-	bastion := httptest.NewServer(hooks)
+	routes := http.NewServeMux()
+	routes.Handle("POST /claude-code/hooks", hooks)
+	routes.Handle("POST /claude-code/probes", hooks.Probes())
+	routes.Handle("GET /claude-code/probes", hooks.Preflight())
+	bastion := httptest.NewServer(routes)
 	t.Cleanup(bastion.Close)
 	return bastion, shipper
 }
@@ -116,12 +136,23 @@ func newHooks(t *testing.T, at *service, open transcripts.Opener) (*httptest.Ser
 // fire sends one hook payload and returns what the turn would print.
 func fire(t *testing.T, bastion *httptest.Server, event map[string]any) string {
 	t.Helper()
+	return send(t, bastion.URL+"/claude-code/hooks", event)
+}
+
+// probe sends one hook payload the way a probe session's hook does.
+func probe(t *testing.T, bastion *httptest.Server, event map[string]any) string {
+	t.Helper()
+	return send(t, bastion.URL+"/claude-code/probes", event)
+}
+
+func send(t *testing.T, address string, event map[string]any) string {
+	t.Helper()
 	body, err := json.Marshal(event)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	response, err := client.Post(bastion.URL+"/claude-code/hooks", "application/json", strings.NewReader(string(body)))
+	response, err := client.Post(address, "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +240,7 @@ func TestAPromptGetsTheBlockInTheEnvelopeTheHookDocsSpecify(t *testing.T) {
 	if len(at.asks) != 1 {
 		t.Fatalf("got %d asks, want 1", len(at.asks))
 	}
-	if at.asks[0] != (recall.Ask{
+	if !reflect.DeepEqual(at.asks[0], recall.Ask{
 		SessionID: session, Harness: "claude-code",
 		ScopeKey: "example.test/acme/widget", Prompt: "how do we ship this?", Limit: 10,
 	}) {

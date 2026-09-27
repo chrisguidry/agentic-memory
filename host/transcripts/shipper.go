@@ -99,8 +99,7 @@ type Shipper struct {
 // run at once, because each would start from the offset the other is about to
 // advance.
 func (s *Shipper) Ship(ctx context.Context, request Request) ([]byte, error) {
-	guard, _ := s.files.LoadOrStore(request.Path, &sync.Mutex{})
-	lock := guard.(*sync.Mutex)
+	lock := s.lock(request.Path)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -113,8 +112,18 @@ func (s *Shipper) Ship(ctx context.Context, request Request) ([]byte, error) {
 	return answer, nil
 }
 
+// lock is the lock every read and write of one file's record takes.
+func (s *Shipper) lock(path string) *sync.Mutex {
+	guard, _ := s.files.LoadOrStore(path, &sync.Mutex{})
+	return guard.(*sync.Mutex)
+}
+
 func (s *Shipper) ship(ctx context.Context, request Request) ([]byte, error) {
 	name := filepath.Base(request.Path)
+	if s.probe(request.Path) {
+		s.logf("%s: a probe session's transcript, never shipped", name)
+		return json.Marshal(Counts{})
+	}
 
 	// Only Claude Code's live hook fires many times on a growing file. Every
 	// other harness ships whole, so its shipment starts at the first entry.

@@ -44,9 +44,15 @@ type Hooks struct {
 	Deadline time.Duration
 	Now      func() time.Time
 	Log      *log.Logger
+
+	probes handed
 }
 
 func (h *Hooks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.serve(w, r, false)
+}
+
+func (h *Hooks) serve(w http.ResponseWriter, r *http.Request, probe bool) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
 	if err != nil {
 		answer(w, "")
@@ -59,11 +65,28 @@ func (h *Hooks) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The mark is written before the answer, so no event after this one can
+	// find the transcript unmarked.
+	if probe && event.TranscriptPath != "" {
+		if err := h.Shipper.MarkProbe(event.TranscriptPath); err != nil {
+			h.logf("%s: could not mark %s as a probe's: %v", event.SessionID, event.TranscriptPath, err)
+		}
+	}
+
 	body := ""
 	if event.HookEventName == "UserPromptSubmit" {
-		body = envelope(h.block(r.Context(), event))
+		body = envelope(h.block(r.Context(), event, probe))
 	}
 	answer(w, body)
+
+	// A probe ships nothing, so the session's prompts never reach the store.
+	if probe {
+		h.logf("%s: probe %s, nothing shipped", event.SessionID, event.HookEventName)
+		if event.HookEventName == "SessionEnd" {
+			h.probes.forget(event.SessionID)
+		}
+		return
+	}
 
 	// The turn is over as far as Claude Code is concerned, so the file can be
 	// read now. Reading it before the response is written would put the whole
@@ -86,28 +109,38 @@ func ships(event string) bool {
 // block asks the service what earlier sessions said, inside the deadline the
 // turn is waiting through. A missing service, a slow one, and an empty answer
 // all look the same from the turn: no memory this time.
-func (h *Hooks) block(ctx context.Context, event payload) string {
+func (h *Hooks) block(ctx context.Context, event payload, probe bool) string {
 	if event.Cwd == "" || event.SessionID == "" {
 		h.logf("no working directory or session in the payload")
 		return ""
 	}
 	key, _ := h.Scope(event.Cwd)
 
-	ctx, cancel := context.WithTimeout(ctx, h.Deadline)
-	defer cancel()
-	statements, err := h.Recall.Statements(ctx, recall.Ask{
+	ask := recall.Ask{
 		SessionID: event.SessionID,
 		Harness:   Harness,
 		ScopeKey:  key,
 		Prompt:    event.Prompt,
 		Limit:     h.Limit,
-	})
+	}
+	ctx, cancel := context.WithTimeout(ctx, h.Deadline)
+	defer cancel()
+	var statements []recall.Statement
+	var err error
+	if probe {
+		statements, err = h.Recall.Probe(ctx, ask, h.probes.of(event.SessionID))
+	} else {
+		statements, err = h.Recall.Statements(ctx, ask)
+	}
 	if err != nil {
 		h.logf("%s: no answer within %s: %v", event.SessionID, h.Deadline, err)
 		return ""
 	}
 	if len(statements) == 0 {
 		return ""
+	}
+	if probe {
+		h.probes.add(event.SessionID, statements)
 	}
 	h.logf("%s: %d statements for %s", event.SessionID, len(statements), key)
 	return recall.Block(statements, h.now())

@@ -16,6 +16,11 @@ statement the session already saw is not sent again, because the injected
 text lands in the conversation and stays there. And the outcome flow, when it
 is built, joins what a turn cost and whether it worked to what the turn was
 handed, which is the only way the ranking learns.
+
+A probe asks the same turn path and records nothing. It is how recall is
+judged from real sessions without the judging becoming part of the history
+that later turns read. It has a route of its own, `probe`, so a service that
+predates probes answers a probe with 404 and records nothing.
 """
 
 import asyncio
@@ -25,11 +30,12 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import asyncpg
+from pydantic import BaseModel, ConfigDict, Field
 
 from .embed import Embedder
 from .match import match
 from .memories import live_at, ranked
-from .metrics import RECALLS, phase
+from .metrics import PROBES, RECALLS, phase
 from .readings import holds_nothing, short
 from .settings import Settings
 from .window import plumbing
@@ -92,6 +98,52 @@ class Handout:
 
     form: Form
     statements: list[dict]
+
+
+@dataclass(frozen=True)
+class Probe:
+    """A recall that is handed what a live one would be, and records nothing.
+
+    `handed` is what the client handed this session on its earlier probes.
+    Nothing a probe is handed is written to `injections`, so without it every
+    probe in a session would take the opening form.
+    """
+
+    handed: frozenset[int] = frozenset()
+
+
+class Ask(BaseModel):
+    """What a client says about the turn that is starting."""
+
+    # A field the service does not name is refused. Without that, a probe sent
+    # to the live route by mistake would be recorded as a live turn.
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    harness: str
+    scope_key: str | None = None
+    # What the person typed, so a turn after the first can be handed what is
+    # about it. Empty means the session's first ask is the only form served.
+    prompt: str = ""
+    limit: int = Field(LIMIT, ge=1, le=LIMIT)
+
+
+def answer(handout: Handout) -> dict:
+    """The body a client is sent for a handout."""
+    return {
+        "statements": [
+            {
+                "id": row["id"],
+                "statement": row["statement"],
+                "kind": row["kind"],
+                "scope_key": row["scope_key"],
+                "said_at": row["said_at"].isoformat() if row["said_at"] else None,
+                "actor": row["actor"],
+                "actor_depth": row["actor_depth"],
+            }
+            for row in handout.statements
+        ]
+    }
 
 
 def form_for(seen: Collection[int]) -> Form:
@@ -207,6 +259,7 @@ async def turn(
     prompt: str,
     now: datetime | None = None,
     waiting: Callable[[], Awaitable[bool]] | None = None,
+    probe: Probe | None = None,
 ) -> Handout:
     """What this turn is handed: the match, and the opening list on a session's first ask.
 
@@ -214,14 +267,18 @@ async def turn(
     statement recorded for a client that stopped waiting never reached the
     session, and the record would keep the session from ever being handed it,
     so a handout is recorded only while the client waits.
+
+    A `probe` is chosen the same way and recorded nowhere, and is counted under
+    its own counter.
     """
     moment = now or datetime.now(UTC)
+    counted = RECALLS if probe is None else PROBES
     # A harness writes its own entries as prompts: a task notification, a
     # skill's body, a Stop hook's feedback. The classifier does not read them,
     # and a statement handed to one would be marked seen and never reach the
     # session again, so one is handed nothing before anything is read.
     if plumbing(prompt):
-        RECALLS.labels(form="plumbing", outcome="nothing").inc()
+        counted.labels(form="plumbing", outcome="nothing").inc()
         return Handout("plumbing", [])
     # A recall that fails before it reads what the session was handed has no
     # form yet, and its error is counted under this one.
@@ -229,6 +286,8 @@ async def turn(
     try:
         with phase("seen"):
             handed_before = await seen_by(pool, session_id)
+        if probe is not None:
+            handed_before |= probe.handed
         form = form_for(handed_before)
         handout = await choose(
             pool,
@@ -239,23 +298,24 @@ async def turn(
             prompt=prompt,
             now=moment,
         )
-        # An empty handout writes nothing, so the check on the client runs only
-        # when a write would follow.
-        if handout.statements and waiting is not None and not await waiting():
-            RECALLS.labels(form=form, outcome="gone").inc()
-            return handout
-        await record(
-            pool,
-            handout.statements,
-            session_id=session_id,
-            harness=harness,
-            scope_key=scope_key,
-            moment=moment,
-        )
+        if probe is None:
+            # An empty handout writes nothing, so the check on the client runs
+            # only when a write would follow.
+            if handout.statements and waiting is not None and not await waiting():
+                RECALLS.labels(form=form, outcome="gone").inc()
+                return handout
+            await record(
+                pool,
+                handout.statements,
+                session_id=session_id,
+                harness=harness,
+                scope_key=scope_key,
+                moment=moment,
+            )
     except Exception:
-        RECALLS.labels(form=form, outcome="error").inc()
+        counted.labels(form=form, outcome="error").inc()
         raise
-    RECALLS.labels(form=form, outcome="handed" if handout.statements else "nothing").inc()
+    counted.labels(form=form, outcome="handed" if handout.statements else "nothing").inc()
     return handout
 
 

@@ -37,6 +37,16 @@ RECALLS = Counter(
     registry=REGISTRY,
 )
 
+# A probe is a recall that records nothing, asked to judge the turn path. It has
+# a counter of its own, so the live counts and the dashboard that sums them hold
+# only what a person's sessions asked.
+PROBES = Counter(
+    "agentic_memory_probe_recalls",
+    "Probe recalls by the form the turn path took and what came of it.",
+    ["form", "outcome"],
+    registry=REGISTRY,
+)
+
 # The bastion counts the recalls that missed its deadline and sends the count
 # with its next recall, because Prometheus does not scrape a laptop.
 MISSES = Counter(

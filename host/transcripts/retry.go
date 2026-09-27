@@ -114,14 +114,14 @@ func (s *Shipper) keep(path string, found behind) {
 	}
 }
 
-// forget clears a file from its offset record. A record with no offset holds
-// nothing else worth keeping, so it is removed.
+// forget clears a file from its offset record. A record with no offset and no
+// probe mark holds nothing else worth keeping, so it is removed.
 func (s *Shipper) forget(path string) {
 	name := offsetFile(s.StateDir, path)
 	record := readOffset(name)
 	record.Behind = nil
 	var err error
-	if record.Offset == 0 {
+	if record.Offset == 0 && !record.Probe {
 		err = os.Remove(name)
 	} else {
 		err = writeOffset(name, record)

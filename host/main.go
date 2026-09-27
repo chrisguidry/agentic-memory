@@ -43,8 +43,7 @@ func main() {
 	// anything else this program could do. Flag parsing, configuration, and
 	// logging all happen after this line.
 	if len(os.Args) > 1 && os.Args[1] == "claude" {
-		claudecode.Hook(os.Stdin, os.Stdout)
-		return
+		os.Exit(claudecode.Hook(os.Stdin, os.Stdout, os.Stderr))
 	}
 
 	switch command() {

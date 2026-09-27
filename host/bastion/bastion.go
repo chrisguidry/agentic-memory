@@ -100,6 +100,8 @@ func Routes(config Config, logger *log.Logger) (http.Handler, *transcripts.Shipp
 
 	routes := http.NewServeMux()
 	routes.Handle("POST /claude-code/hooks", hooks)
+	routes.Handle("POST "+claudecode.ProbePath, hooks.Probes())
+	routes.Handle("GET "+claudecode.ProbePath, hooks.Preflight())
 	routes.Handle("POST /transcripts/ship", ship(shipper, config.Machine, logger))
 	routes.Handle("GET /transcripts/behind", behind(shipper))
 	routes.Handle("/", onward)

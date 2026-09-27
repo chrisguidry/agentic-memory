@@ -28,6 +28,8 @@ type offset struct {
 	Version string `json:"version"`
 	// Behind is set while the file has lines the service has not taken.
 	Behind *behind `json:"behind,omitempty"`
+	// Probe is set on a probe session's transcript, which is never shipped.
+	Probe bool `json:"probe,omitempty"`
 }
 
 // offsetFile names the state file for a transcript. The name is a hash of the

@@ -15,7 +15,7 @@ import uvicorn
 from docket import Docket
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from . import db, embed, ingest, ledger, metrics, recall
 from . import memories as statements
@@ -32,6 +32,7 @@ from .db import store_pool
 from .labels import router as labels_router
 from .merge import merge_statements
 from .otlp import walk
+from .probe import router as probe_router
 from .settings import get_settings
 from .transcripts import Chunk, export
 
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="agentic-memory", lifespan=lifespan)
 app.include_router(labels_router)
+app.include_router(probe_router)
 
 
 async def schedule(docket: Docket, prompts: list[tuple[str, str]], run: str = "live") -> int:
@@ -244,16 +246,9 @@ async def memories(
     )
 
 
-class Ask(BaseModel):
-    """What a client says about the turn that is starting."""
+class LiveAsk(recall.Ask):
+    """What a person's own session says about the turn that is starting."""
 
-    session_id: str
-    harness: str
-    scope_key: str | None = None
-    # What the person typed, so a turn after the first can be handed what is
-    # about it. Empty means the session's first ask is the only form served.
-    prompt: str = ""
-    limit: int = Field(recall.LIMIT, ge=1, le=recall.LIMIT)
     # How many recalls the client stopped waiting for since its last ask. The
     # client is on a machine Prometheus does not scrape, so it reports its
     # misses here and the service counts them.
@@ -261,7 +256,7 @@ class Ask(BaseModel):
 
 
 @app.post("/recall")
-async def recall_for_turn(request: Request, ask: Ask) -> dict:
+async def recall_for_turn(request: Request, ask: LiveAsk) -> dict:
     """What a turn is handed.
 
     A session's first ask gets the top of its scope's list. Every ask after it
@@ -285,20 +280,7 @@ async def recall_for_turn(request: Request, ask: Ask) -> dict:
             prompt=ask.prompt,
             waiting=waiting,
         )
-    return {
-        "statements": [
-            {
-                "id": row["id"],
-                "statement": row["statement"],
-                "kind": row["kind"],
-                "scope_key": row["scope_key"],
-                "said_at": row["said_at"].isoformat() if row["said_at"] else None,
-                "actor": row["actor"],
-                "actor_depth": row["actor_depth"],
-            }
-            for row in handout.statements
-        ]
-    }
+    return recall.answer(handout)
 
 
 @app.get("/injections")
