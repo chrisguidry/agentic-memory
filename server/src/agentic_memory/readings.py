@@ -54,6 +54,17 @@ NEIGHBOURS = f"""
     LIMIT $4
 """
 
+# The vector index hands back its nearest `hnsw.ef_search` rows, 40 by default,
+# and the conditions above apply after it. In a replay, the nearest readings
+# are often ones taken after the moment, and all 40 can be dropped, so fewer
+# than the neighbourhood are left and the prompt is matched whatever its
+# neighbours held. Readings embedded by an older model are dropped the same
+# way. pgvector's iterative scan reads on through the index, in order of
+# distance, until the limit is met or it has read `hnsw.max_scan_tuples` rows,
+# 20,000 by default. It needs pgvector 0.8.0 or later, and SET LOCAL holds it
+# to the transaction the query runs in.
+ITERATIVE = "SET LOCAL hnsw.iterative_scan = strict_order"
+
 
 def short(prompt: str, words: int) -> bool:
     """Whether a prompt has few enough words to be judged by its neighbours.
@@ -81,14 +92,16 @@ async def holds_nothing(
     not a measure, and the prompt is matched as usual.
     """
     with phase("neighbours"):
-        found = await pool.fetch(
-            NEIGHBOURS,
-            literal(vector),
-            model,
-            as_of,
-            settings.recall_neighbours,
-            *THRESHOLDS.values(),
-        )
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute(ITERATIVE)
+            found = await connection.fetch(
+                NEIGHBOURS,
+                literal(vector),
+                model,
+                as_of,
+                settings.recall_neighbours,
+                *THRESHOLDS.values(),
+            )
     if len(found) < settings.recall_neighbours:
         return False
     empty = sum(row["empty"] for row in found)

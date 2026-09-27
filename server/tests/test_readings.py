@@ -7,13 +7,15 @@ invented.
 """
 
 import json
+import random
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import pytest
 
 from agentic_memory.classify import KIND_COLUMNS
-from agentic_memory.embed import QUERY_CHARACTERS, Embedder, trimmed
+from agentic_memory.embed import QUERY_CHARACTERS, Embedder, batches, literal, trimmed
 from agentic_memory.readings import embed_reading, embed_readings, holds_nothing, short
 from agentic_memory.recall import choose
 from agentic_memory.settings import Settings
@@ -109,6 +111,56 @@ class TestHoldsNothing:
         assert await quiet(readings, embedder, "looks great, keep going") is False
 
 
+def spread(center: list[float], width: float, rng: random.Random) -> list[float]:
+    return [value + rng.gauss(0, width) for value in center]
+
+
+def kind_scores(held_memory: bool) -> list[float]:
+    """A reading's score for each kind, in the order of `KIND_COLUMNS`."""
+    scores = dict.fromkeys(KIND_COLUMNS, 0.05) | ({"semantic": 0.95} if held_memory else {})
+    return [scores[kind] for kind in KIND_COLUMNS]
+
+
+@pytest.fixture
+async def crowded(store: asyncpg.Pool) -> tuple[asyncpg.Pool, list[float]]:
+    """A prompt whose nearest readings were all taken after the moment of a replay.
+
+    Before the moment, thirty readings near the prompt held no memory, and
+    3,000 far from it held one. After the moment, sixty readings nearer still
+    held one. At this size Postgres reads the nearest readings through the
+    vector index rather than scanning the table.
+    """
+    rng = random.Random(1)
+    prompt = [rng.gauss(0, 1) for _ in range(384)]
+    far = [[rng.gauss(0, 1) for _ in range(384)] for _ in range(3000)]
+    rows = (
+        [(vector, NOW - timedelta(days=1), True) for vector in far]
+        + [(spread(prompt, 0.6, rng), NOW - timedelta(days=1), False) for _ in range(30)]
+        + [(spread(prompt, 0.3, rng), NOW + timedelta(days=1), True) for _ in range(60)]
+    )
+    await store.executemany(
+        f"""
+        INSERT INTO classifications
+            (session_id, entry_id, model, questions_fingerprint, rounds, state,
+             classified_at, prompt_embedding, prompt_embedding_model, {", ".join(KIND_COLUMNS)})
+        VALUES ('s1', $1, 'jev-1.13.0', 'fp', 5, '{{}}'::jsonb, $2, $3::vector, 'bge',
+                {", ".join(f"${number}" for number in range(4, 4 + len(KIND_COLUMNS)))})
+        """,
+        [
+            (f"e{number}", at, literal(vector), *kind_scores(held))
+            for number, (vector, at, held) in enumerate(rows)
+        ],
+    )
+    await store.execute("ANALYZE classifications")
+    return store, prompt
+
+
+async def test_readings_taken_after_the_moment_do_not_crowd_out_the_ones_before(crowded):
+    store, prompt = crowded
+    settings = Settings(recall_neighbours=20, recall_empty_share=0.8)
+    assert await holds_nothing(store, prompt, model="bge", settings=settings, as_of=NOW) is True
+
+
 @pytest.mark.parametrize(
     "prompt, words, expected",
     [
@@ -198,6 +250,15 @@ class TestTrimming:
         cut = embedder.query(text)
         assert sum(a * b for a, b in zip(whole, cut, strict=True)) == pytest.approx(1.0, abs=1e-5)
 
+    # The tokenizer reads a word of more than 100 characters as one unknown
+    # token, so a prompt of such words fits far more than 10,000 characters into
+    # the model's 512 tokens, and the cut changes what the model reads.
+    def test_the_cut_changes_the_vector_of_a_prompt_of_very_long_words(self, embedder):
+        text = ("q" * 101 + " ") * 150
+        whole = next(iter(embedder._model.query_embed(text))).tolist()
+        cut = embedder.query(text)
+        assert sum(a * b for a, b in zip(whole, cut, strict=True)) < 0.9999
+
     def test_many_prompts_are_cut_the_same_way(self, embedder):
         text = "international understanding administration " * 400
         [together] = embedder.queries([text])
@@ -205,7 +266,31 @@ class TestTrimming:
         assert sum(a * b for a, b in zip(alone, together, strict=True)) == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize(
+    "lengths, budget, expected",
+    [
+        ([], 1024, []),
+        ([10, 10, 10], 30, [[0, 1, 2]]),
+        ([10, 10, 10], 20, [[0, 1], [2]]),
+        ([512, 3, 512, 3], 1024, [[1, 3], [0, 2]]),
+        ([512, 512, 512], 1024, [[0, 1], [2]]),
+        ([512], 100, [[0]]),
+    ],
+    ids=["none", "all-fit", "two-fit", "short-first", "long-in-pairs", "one-over-the-budget"],
+)
+def test_prompts_are_batched_shortest_first_within_a_budget_of_tokens(lengths, budget, expected):
+    assert batches(lengths, budget) == expected
+
+
 class TestEmbedding:
+    def test_one_run_of_the_model_waits_for_another(self, embedder):
+        with ThreadPoolExecutor(1) as pool:
+            with embedder.lock:
+                pending = pool.submit(embedder.query, "keep going")
+                done, _ = wait([pending], timeout=0.5)
+                assert not done
+            assert len(pending.result(timeout=30)) == 384
+
     def test_many_prompts_come_back_in_the_order_given(self, embedder):
         texts = ["the widget's config is in widget.toml at the repo root " * 20, "ok", "yes"]
         together = embedder.queries(texts)

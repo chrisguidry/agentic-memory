@@ -2,7 +2,8 @@
 
 These run against the store, because the list is one query that has to reach
 the scopes above the session's, leave out what has no scope, and leave out what
-the session already saw.
+the session already saw. A turn that records a handout runs with the real
+model, because what it records depends on what the match found.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -10,7 +11,9 @@ from datetime import UTC, datetime, timedelta
 import asyncpg
 import pytest
 
-from agentic_memory.recall import LIMIT, opening
+from agentic_memory.embed import Embedder, embed_missing
+from agentic_memory.recall import LIMIT, opening, seen_by, turn
+from agentic_memory.settings import Settings
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
 
@@ -85,3 +88,43 @@ class TestOpening:
             "UPDATE memories SET superseded_by = $2, superseded_at = now() WHERE id = $1", old, new
         )
         assert await statements(store) == ["the new way"]
+
+
+@pytest.fixture
+async def embedded(store: asyncpg.Pool, embedder: Embedder) -> asyncpg.Pool:
+    """Enough embedded statements in one scope for a match to have a baseline."""
+    for n in range(12):
+        await held(store, "github.com/liken-sh/liken", f"Rule {n} of the widget's tests.")
+    await embed_missing(store, embedder)
+    return store
+
+
+# No margin, so the match finds more than the prompt limit and the list has
+# statements left over.
+OPEN_HANDED = Settings(recall_margin=0.0, recall_prompt_limit=5, recall_opening_limit=3)
+
+
+async def first_turn(store: asyncpg.Pool, embedder: Embedder):
+    return await turn(
+        store,
+        embedder,
+        OPEN_HANDED,
+        session_id="s1",
+        harness="pi",
+        scope_key="github.com/liken-sh/liken",
+        prompt="which rules do the widget's tests follow?",
+        now=NOW,
+    )
+
+
+async def test_a_first_turn_records_what_it_matched_apart_from_what_it_listed(embedded, embedder):
+    await first_turn(embedded, embedder)
+    rows = await embedded.fetch(
+        "SELECT form, cardinality(memory_ids) AS handed FROM injections ORDER BY form"
+    )
+    assert [(row["form"], row["handed"]) for row in rows] == [("match", 5), ("opening", 3)]
+
+
+async def test_what_a_session_saw_is_every_form_it_was_handed(embedded, embedder):
+    handout = await first_turn(embedded, embedder)
+    assert await seen_by(embedded, "s1") == {row["id"] for row in handout.statements}

@@ -394,16 +394,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS memories_source
 --
 -- An ended statement has no statement that replaced it, so `superseded_by`
 -- cannot mark it, and the predicate tests both columns. Postgres uses a
--- partial index only for a query that repeats the predicate, so every query
--- over the live statements builds it from `memories.live`. A commitment past
--- its moment stays in the index, because a moment passes without a write.
+-- partial index only for a query that repeats the predicate, and
+-- `memories.live` builds it for the queries that do. A commitment past its
+-- moment stays in the index, because a moment passes without a write.
+--
+-- The turn path's reads do not use this index. They test the predicate inside
+-- the CASE that `memories.live_at` builds, which Postgres does not match to
+-- the index, so they scan the table. At 20,000 statements a scan took 6 to 7
+-- ms.
 CREATE INDEX IF NOT EXISTS memories_live_scope
     ON memories (scope_key, kind, said_at DESC)
     WHERE superseded_by IS NULL AND ended_at IS NULL;
 
--- The nearest live statements to a prompt. Cosine, because the model's
--- vectors are compared that way, and only the live rows, because a retired
--- statement is never handed out.
+-- The live statements' embeddings, for finding the nearest ones to a vector.
+-- Cosine, because the model's vectors are compared that way, and only the live
+-- rows, because a retired statement is never handed out. Postgres reads it
+-- only for a query that orders by distance with a limit. The match does not:
+-- it reads every reachable statement, because its baseline is over the whole
+-- scope, and it tests the predicate through `memories.live_at`, so it scans
+-- the table.
 CREATE INDEX IF NOT EXISTS memories_live_embedding
     ON memories USING hnsw (embedding vector_cosine_ops)
     WHERE superseded_by IS NULL AND ended_at IS NULL;
@@ -425,8 +434,9 @@ CREATE INDEX IF NOT EXISTS classifications_prompt_embedding
 DROP INDEX IF EXISTS memories_scope;
 DROP INDEX IF EXISTS memories_recent;
 
--- What a turn was handed, and when. One row per turn that received anything,
--- naming the statements that went. A turn asks for what its session has not
+-- What a turn was handed, and when. One row for each way a turn's statements
+-- were chosen, naming the statements that went. A turn handed nothing writes
+-- no row. A turn asks for what its session has not
 -- seen, so this is what makes the next turn's list shorter, and it is the row
 -- the outcome flow will join a turn's cost and result to.
 CREATE TABLE IF NOT EXISTS injections (
@@ -437,6 +447,17 @@ CREATE TABLE IF NOT EXISTS injections (
     memory_ids  bigint[] NOT NULL,
     injected_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- How the statements on a row were chosen: `match` found them from the prompt,
+-- and `opening` took them from the top of the scope's list. A session's first
+-- turn can be handed both, and it writes one row for each, so a label can
+-- tell which of the two chose a statement. What a session saw is every row of
+-- it, whatever the form.
+--
+-- A row written before this column has no form. A reader takes a session's
+-- first such row as the opening and the rest as the match.
+ALTER TABLE injections ADD COLUMN IF NOT EXISTS form text
+    CHECK (form IN ('opening', 'match'));
 
 -- Every read of the turn path asks what one session was handed.
 CREATE INDEX IF NOT EXISTS injections_session

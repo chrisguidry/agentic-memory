@@ -39,18 +39,30 @@ PLUMBING_PREFIXES = (
     "(Re-invocation of /",
 )
 
+# The characters both filters read as whitespace around an entry. Left to
+# themselves the two disagree: Python's `\s` and `lstrip` also take a no-break
+# space and the separators \x1c to \x1f, Postgres's `\s` takes an em space and
+# not a no-break space, and `btrim` takes only a space. The turn path filters in
+# Python and the replay filters in Postgres, so an entry they disagree on is
+# handed nothing live and handed statements in the replay, or the other way
+# round. Both are given this list. `SPACE` is the list as a regular expression,
+# in escapes both engines read the same way.
+WHITESPACE = " \t\n\r\f\v"
+SPACE = r"[ \t\n\r\f\v]"
+LEADING = f"ltrim(body, {' || '.join(f'chr({ord(character)})' for character in WHITESPACE)})"
+
 # Entries that are plumbing only when they are the whole prompt: a bare slash
 # command, and a prompt of nothing but image references. The same text with the
 # person's words beside it is the person. Each pattern is written in the syntax
 # Python and Postgres read the same way, because both match it.
 PLUMBING_WHOLE = (
     r"/[\w:.-]+",
-    r"(\[Image[^]]*\]\s*)+",
+    rf"(\[Image[^]]*\]{SPACE}*)+",
 )
 WHOLE = "|".join(PLUMBING_WHOLE)
 NOT_PLUMBING = " AND ".join(
-    [f"btrim(body) NOT LIKE '{prefix.replace("'", "''")}%'" for prefix in PLUMBING_PREFIXES]
-    + [f"body !~ '^\\s*({WHOLE})\\s*$'"]
+    [f"{LEADING} NOT LIKE '{prefix.replace("'", "''")}%'" for prefix in PLUMBING_PREFIXES]
+    + [f"body !~ '^{SPACE}*({WHOLE}){SPACE}*$'"]
 )
 
 # The prompt being read, and where it happened. A prompt with no entry id of
@@ -130,8 +142,8 @@ class Window:
 
 def plumbing(body: str) -> bool:
     """Whether a harness wrote this entry for itself rather than the person."""
-    return body.lstrip().startswith(PLUMBING_PREFIXES) or bool(
-        re.fullmatch(rf"\s*({WHOLE})\s*", body)
+    return body.lstrip(WHITESPACE).startswith(PLUMBING_PREFIXES) or bool(
+        re.fullmatch(rf"{SPACE}*({WHOLE}){SPACE}*", body)
     )
 
 

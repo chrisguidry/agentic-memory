@@ -136,6 +136,14 @@ class TestBackfill:
         await store.execute("UPDATE memories SET actionable = 0.8 WHERE id = $1", done)
         assert [row["id"] for row in await unanswered(store)] == [live]
 
+    async def test_an_ended_statement_is_not_a_candidate(self, store):
+        live = await held(store, "The widget is written in Go.", entry_id="e1")
+        ended = await held(store, "The widget ships on Friday.", entry_id="e2")
+        await store.execute(
+            "UPDATE memories SET ended_at = now(), ended_reason = 'event' WHERE id = $1", ended
+        )
+        assert [row["id"] for row in await unanswered(store)] == [live]
+
     async def test_every_candidate_is_answered(self, store):
         for number in range(5):
             await held(store, f"Rule {number} of the widget.", entry_id=f"e{number}")

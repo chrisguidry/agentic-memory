@@ -103,14 +103,19 @@ def live_at(moment: str, by_said_at: str) -> str:
     `by_said_at` names a boolean parameter that reads the table as it is now
     instead, with each statement placed at the moment its message was said. A
     re-read writes statements after the messages it reads, and read as the
-    table stood, none of them were there yet.
+    table stood, none of them were there yet. A statement counts only after its
+    message, so a prompt is not handed the statement written from it. This
+    reading needs a moment, and a null moment matches no statement.
 
     A commitment ends when its moment passes, which is read from the row and
     written nowhere, so it is compared with the moment of the read, or with the
     clock of the store when the read is for now.
+
+    Postgres does not match this CASE to the predicate of the partial indexes,
+    so a read through it scans the table.
     """
     return f"""(CASE WHEN {by_said_at}::boolean
-             THEN {live()} AND said_at <= {moment}
+             THEN {live()} AND said_at < {moment}
              ELSE (superseded_by IS NULL OR superseded_at > {moment})
                   AND (ended_at IS NULL OR ended_at > {moment})
                   AND ({moment}::timestamptz IS NULL OR created_at <= {moment})

@@ -80,10 +80,17 @@ def stratified_sample(
     return [pair for key in order for pair in grouped[key][: quota[key]]]
 
 
-# Every injection in the record, with whether it was the first its session
-# ever got. The row number is computed over the whole table, unfiltered,
-# because a session's opening handout can fall before the range a sample is
-# drawn from while a later match from the same session falls inside it.
+# Every injection in the record, with the form that chose its statements.
+#
+# A row written before the form was recorded has none, and its form is read
+# from its place: a session's first row is the opening and the rest are the
+# match. That is exact for a session from before a first prompt was matched,
+# when the first row held only the list. A session from after that and before
+# the column holds the matched and the listed statements of its first turn in
+# one row, and all of them are read as the opening. The row number is computed
+# over the whole table, unfiltered, because a session's opening handout can
+# fall before the range a sample is drawn from while a later match from the
+# same session falls inside it.
 #
 # An excluded scope drops an injection whose own scope_key is it or a scope
 # under it. The unnest is empty when nothing was excluded, so the NOT EXISTS
@@ -91,11 +98,16 @@ def stratified_sample(
 RANKED_INJECTIONS = """
     WITH ranked AS (
         SELECT id, session_id, injected_at, memory_ids, scope_key,
-               row_number() OVER (PARTITION BY session_id ORDER BY injected_at, id) = 1
-                   AS opening
+               coalesce(
+                   form,
+                   CASE WHEN row_number() OVER (
+                            PARTITION BY session_id ORDER BY injected_at, id
+                        ) = 1
+                        THEN 'opening' ELSE 'match' END
+               ) AS form
         FROM injections
     )
-    SELECT id, session_id, injected_at, memory_ids, opening
+    SELECT id, session_id, injected_at, memory_ids, form
     FROM ranked
     WHERE injected_at >= $1 AND injected_at < $2
       AND NOT EXISTS (
@@ -181,7 +193,7 @@ async def candidate_pairs(
         entry_id = _prompt_for(prompts.get(row["session_id"], []), row["injected_at"])
         if entry_id is None:
             continue
-        form: Form = "opening" if row["opening"] else "match"
+        form: Form = row["form"]
         for memory_id in row["memory_ids"]:
             found = strata.get(memory_id)
             if found is None:

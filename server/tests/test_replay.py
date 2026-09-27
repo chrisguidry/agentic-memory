@@ -14,6 +14,7 @@ import pytest
 from agentic_memory.embed import Embedder, embed_missing
 from agentic_memory.ingest import store as ingest
 from agentic_memory.otlp import walk
+from agentic_memory.recall import choose
 from agentic_memory.replay.command import parser, run
 from agentic_memory.replay.run import prompts, replay
 from agentic_memory.settings import Settings
@@ -228,6 +229,29 @@ async def test_reading_by_said_at_places_each_statement_at_its_message(
     await said(store, "a", "a1", "start", MONDAY)
     [turn] = await replayed(store, embedder, by_said_at=True)
     assert handed(turn) == expected
+
+
+# A statement written from a prompt carries that prompt's moment as its
+# said_at, and it did not exist yet when the prompt was said.
+async def test_reading_by_said_at_does_not_hand_a_prompt_its_own_statement(store, embedder):
+    await held(store, "the rule", LATER, said_at=MONDAY)
+    await said(store, "a", "a1", "start", MONDAY)
+    [turn] = await replayed(store, embedder, by_said_at=True)
+    assert handed(turn) == []
+
+
+async def test_reading_by_said_at_needs_a_moment(store, embedder):
+    with pytest.raises(ValueError, match="as_of"):
+        await choose(
+            store,
+            embedder,
+            Settings(),
+            seen=frozenset(),
+            scope_key=SCOPE,
+            prompt="start",
+            now=MONDAY,
+            by_said_at=True,
+        )
 
 
 async def test_reading_by_said_at_still_ends_a_commitment_at_its_moment(store, embedder):

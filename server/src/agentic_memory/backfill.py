@@ -21,7 +21,7 @@ import asyncpg
 from .actionable import answer, price, unanswered
 from .classify import model_client
 from .db import open_pool
-from .embed import load
+from .embed import TOKENS, load
 from .ledger import RecordedSystemOne, priced
 from .merge_pass import merge_backlog
 from .merge_pass import price as merge_price
@@ -93,14 +93,20 @@ def parser() -> argparse.ArgumentParser:
     prompts = kinds.add_parser(
         "readings", help="embed the prompt of every reading, with the local model"
     )
-    # The model pads a batch to its longest prompt, so a batch of pasted files
-    # holds hundreds of megabytes at once. A pod with a small memory limit runs
-    # this with a small batch, which is slower and stays under the limit.
+    # The batch is how many readings are read from the store at once, and a
+    # reading's prompt is at most 10,000 characters, so it sets no memory worth
+    # counting. The model's memory is set by `TOKENS`: it reads the batch in runs
+    # of at most that many padded tokens, and a backfill of prompts up to 600
+    # words peaked at 375 MB.
     prompts.add_argument(
         "--batch",
         type=int,
         default=BATCH,
-        help=f"how many prompts are embedded at once, {BATCH} by default",
+        help=(
+            f"how many readings are read from the store at once, {BATCH} by default."
+            f" The model reads at most {TOKENS} tokens at a time, whatever the batch,"
+            " and a backfill of long prompts peaked at 375 MB"
+        ),
     )
 
     for subcommand in kinds.choices.values():

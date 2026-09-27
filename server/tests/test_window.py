@@ -8,7 +8,7 @@ exchanges before it first.
 
 import pytest
 
-from agentic_memory.window import Window, plumbing, spoken
+from agentic_memory.window import NOT_PLUMBING, Window, plumbing, spoken
 
 
 class TestPlumbing:
@@ -69,6 +69,54 @@ class TestPlumbing:
 )
 def test_what_a_harness_writes_as_a_prompt_is_plumbing(body, expected):
     assert plumbing(body) == expected
+
+
+# The scheduler filters in Python and the queries filter in Postgres, and the
+# two read whitespace differently unless they are told which characters it is:
+# Python's `\s` and `lstrip` take a no-break space and the ASCII separators,
+# Postgres's `\s` takes an em space, and `btrim` takes only a space.
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("\nGoal check-in: «ship the widget» is still active", True),
+        ("\r\nStop hook feedback: the widget tests fail", True),
+        ("\tAnother Claude session sent a message: the build is green", True),
+        ("\x0b\x0cContinue from where you left off.", True),
+        (" /compact \n", True),
+        ("/compact\x0b", True),
+        ("\n[Image #1]\n", True),
+        ("/café", True),
+        ("\xa0Stop hook feedback: the widget tests fail", False),
+        ("/compact\xa0", False),
+        ("[Image #1]\xa0", False),
+        ("/compact ", False),
+        ("/compact\x1c", False),
+        ("[Image #1] the widget's panel is blank", False),
+        ("keep going", False),
+    ],
+    ids=[
+        "newline-before-a-prefix",
+        "crlf-before-a-prefix",
+        "tab-before-a-prefix",
+        "vertical-tab-and-form-feed-before-a-prefix",
+        "spaces-around-a-command",
+        "vertical-tab-after-a-command",
+        "newlines-around-an-image",
+        "a-command-with-an-accent",
+        "no-break-space-before-a-prefix",
+        "no-break-space-after-a-command",
+        "no-break-space-after-an-image",
+        "em-space-after-a-command",
+        "file-separator-after-a-command",
+        "an-image-with-words",
+        "the-persons-words",
+    ],
+)
+async def test_python_and_postgres_agree_on_plumbing(store, body, expected):
+    in_postgres = await store.fetchval(
+        f"SELECT NOT ({NOT_PLUMBING}) FROM (SELECT $1::text AS body) AS entry", body
+    )
+    assert (plumbing(body), in_postgres) == (expected, expected)
 
 
 def said(occurred_at: int, kind: str, body: str) -> dict:

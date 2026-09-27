@@ -158,9 +158,10 @@ included ones with no scope to three that all have one. Matched turns barely
 moved: 92 handed at 1.37 statements each before, and 77 at 1.38 after.
 Preferences handed fell from 360 to 62.
 
-The prompt filter silences a prompt when at least 0.8 of its 20 nearest
-classified prompts held no memory. A request with a subject usually holds no
-memory either, so the filter applies only to a prompt of 12 words or fewer.
+The prompt filter silences a prompt when more than 0.8 of its 20 nearest
+classified prompts held no memory, which is 17 of them or more. A request
+with a subject usually holds no memory either, so the filter applies only to
+a prompt of 12 words or fewer.
 Without that limit it silenced 42 prompts, 14 of which had a subject. With
 it, it silences 25, and 4 have a subject: two questions the person asked
 about themselves, one question about a release, and one bug report that is
@@ -178,13 +179,17 @@ plan 08's labels set them when enough pairs are labelled.
 On the turn path, embedding a prompt took 5.9 ms at the median and 12.3 ms
 at the ninetieth percentile, the new query for the nearest readings took
 1.8 ms and 2.6 ms, and the query for the nearest statements took 8.8 ms and
-13.5 ms. A prompt is cut to 10,000 characters before it is embedded. The
-longest token in the model's vocabulary covers 19 characters with its
-space, so 512 tokens never cover more than 9,728, and the cut changes no
-vector.
+13.5 ms. A prompt is cut to 10,000 characters before it is embedded. A
+token of prose covers at most 19 characters with its space, so 512 tokens of
+prose cover at most 9,728, and the cut changes no vector of prose. The
+tokenizer reads a word of more than 100 characters as one unknown token, so
+the cut does change the vector of a prompt made of such words, such as a
+pasted hash.
 
 Answering the statement question for the 3,197 live statements takes about
 1.5 million input tokens and two minutes. Embedding the 6,687 readings'
 prompts takes about five minutes on a laptop. A batch of 256 long prompts
-held 816 MB at its peak, so a pod with a small memory limit runs the
-backfill with `--batch`.
+held 816 MB at its peak, and `--batch` did not lower that, because it set
+only how many readings were read from the store. The model was then limited
+to 1,024 padded tokens at a time, whatever the batch, and a backfill of long
+prompts peaked at 375 MB.

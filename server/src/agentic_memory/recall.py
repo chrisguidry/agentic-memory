@@ -25,7 +25,7 @@ predates probes answers a probe with 404 and records nothing.
 
 import asyncio
 from collections.abc import Awaitable, Callable, Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -72,12 +72,12 @@ UNSEEN = f"""
 """
 
 RECORD = """
-    INSERT INTO injections (session_id, harness, scope_key, memory_ids, injected_at)
-    VALUES ($1, $2, $3, $4::bigint[], $5)
+    INSERT INTO injections (session_id, harness, scope_key, memory_ids, injected_at, form)
+    VALUES ($1, $2, $3, $4::bigint[], $5, $6)
 """
 
 HANDED = """
-    SELECT id, session_id, harness, scope_key, memory_ids, injected_at
+    SELECT id, session_id, harness, scope_key, memory_ids, injected_at, form
     FROM injections
     WHERE session_id = $1
     ORDER BY injected_at DESC
@@ -94,10 +94,21 @@ Form = Literal["opening", "match", "plumbing"]
 
 @dataclass(frozen=True)
 class Handout:
-    """What one turn is handed, and the form that chose it."""
+    """What one turn is handed, and the form that chose it.
+
+    `matched` is what the match found from the prompt, and `listed` is what the
+    opening took from the scope's list. They are kept apart because a label
+    judges the rule that chose a statement.
+    """
 
     form: Form
-    statements: list[dict]
+    matched: list[dict]
+    listed: list[dict] = field(default_factory=list)
+
+    @property
+    def statements(self) -> list[dict]:
+        """Everything the turn is handed, the matched first."""
+        return self.matched + self.listed
 
 
 @dataclass(frozen=True)
@@ -195,6 +206,8 @@ async def choose(
     nothing, the opening list included, so a session that opens with a reply gets its
     list on the first prompt that has a subject.
     """
+    if by_said_at and as_of is None:
+        raise ValueError("reading by said_at places statements before a moment, so it needs as_of")
     form = form_for(seen)
     matched: list[dict] = []
     if prompt.strip():
@@ -228,24 +241,32 @@ async def choose(
         as_of=as_of,
         by_said_at=by_said_at,
     )
-    return Handout(form, matched + listed)
+    return Handout(form, matched, listed)
 
 
 async def record(
     pool: asyncpg.Pool,
-    chosen: list[dict],
+    handout: Handout,
     *,
     session_id: str,
     harness: str,
     scope_key: str | None,
     moment: datetime,
 ) -> None:
-    """Write down what went, when anything did."""
-    if chosen:
+    """Write down what went, one row for each way it was chosen, when anything did.
+
+    The rows go in one call, which asyncpg runs as one transaction, so a turn
+    is never recorded as having seen half of what it was handed.
+    """
+    chosen = [("match", handout.matched), ("opening", handout.listed)]
+    rows = [
+        (session_id, harness, scope_key, [row["id"] for row in statements], moment, form)
+        for form, statements in chosen
+        if statements
+    ]
+    if rows:
         with phase("record"):
-            await pool.execute(
-                RECORD, session_id, harness, scope_key, [row["id"] for row in chosen], moment
-            )
+            await pool.executemany(RECORD, rows)
 
 
 async def turn(
@@ -306,7 +327,7 @@ async def turn(
                 return handout
             await record(
                 pool,
-                handout.statements,
+                handout,
                 session_id=session_id,
                 harness=harness,
                 scope_key=scope_key,

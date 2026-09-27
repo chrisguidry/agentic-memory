@@ -130,16 +130,21 @@ async def injected(
     memory_ids: list[int],
     harness: str = "pi",
     scope_key: str | None = SCOPE,
+    form: str | None = None,
 ) -> int:
-    """One turn's handout, recorded the way `recall.record` writes it."""
+    """One turn's handout, recorded the way `recall.record` writes it.
+
+    A row with no form is one written before the form was recorded.
+    """
     return await store.fetchval(
-        "INSERT INTO injections (session_id, harness, scope_key, memory_ids, injected_at)"
-        " VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        "INSERT INTO injections (session_id, harness, scope_key, memory_ids, injected_at, form)"
+        " VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         session_id,
         harness,
         scope_key,
         memory_ids,
         injected_at,
+        form,
     )
 
 
@@ -167,6 +172,17 @@ class TestCandidatePairs:
         await injected(store, "s1", NOW + timedelta(minutes=5), [second])
         forms = {found.entry_id: found.form for found in await self.range(store)}
         assert forms == {"e1": "opening", "e2": "match"}
+
+    async def test_a_first_turn_names_what_it_matched_apart_from_what_it_listed(
+        self, store: asyncpg.Pool
+    ):
+        matched = await held(store, "a matched rule")
+        listed = await held(store, "a listed rule", entry_id="e2")
+        await said(store, "s1", "e1", NOW, "how do we deploy?")
+        await injected(store, "s1", NOW, [matched], form="match")
+        await injected(store, "s1", NOW, [listed], form="opening")
+        forms = {found.memory_id: found.form for found in await self.range(store)}
+        assert forms == {matched: "match", listed: "opening"}
 
     async def test_the_pair_is_matched_to_the_prompt_said_just_before_it(self, store: asyncpg.Pool):
         memory = await held(store, "a rule")

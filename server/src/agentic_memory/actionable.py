@@ -24,6 +24,7 @@ import asyncpg
 from typesafe_sdk import Noul, TypeSafeBadRequestError
 
 from .ledger import RecordedSystemOne, calling, priced
+from .memories import live
 
 log = logging.getLogger("agentic_memory.actionable")
 
@@ -53,11 +54,11 @@ ACTIONABLE = Noul(
 )
 
 # The live statements with no answer, of one message or of every message. A
-# retired statement is never handed out, so it is not worth a call.
-UNANSWERED = """
+# replaced or ended statement is never handed out, so it is not worth a call.
+UNANSWERED = f"""
     SELECT id, statement, scope_key, session_id, entry_id
     FROM memories
-    WHERE superseded_by IS NULL
+    WHERE {live()}
       AND actionable IS NULL
       AND ($1::text IS NULL OR (session_id = $1 AND entry_id = $2))
     ORDER BY id
