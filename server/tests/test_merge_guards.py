@@ -1,12 +1,14 @@
 """The pairs a merge keeps apart, whatever the similarity or the model says.
 
-A statement never retires into praise unless it is praise itself, on any
-merge. A statement retires into one that says the same thing, by the upper
-cutoff or by the first question, only when that one holds all its literals.
-Either merge would lose what the older statement said: a correction retired
-into "nice work" is gone, and so is a URL retired into "use the example
-provider". A newer statement that settles the older one in a different way
-changes a value on purpose, so the second question retires the older statement
+A statement retires only into one whose kind lasts at least as long, on any
+merge: the four durable kinds into each other, a plan into a plan or a durable
+kind, and praise into anything. A statement retires into one that says the
+same thing, by the upper cutoff or by the first question, only when that one
+holds all its literals. Either merge would lose what the older statement said:
+a rule retired into a plan ends when the plan does, a correction retired into
+"nice work" is gone, and a URL retired into "use the example provider" is
+gone. A newer statement that settles the older one in a different way changes
+a value on purpose, so the second question retires the older statement
 whatever literals it lacks, but only when the first question says the two are
 not the same thing. A yes to both is the same thing said without the literal,
 and the pair stands.
@@ -17,7 +19,8 @@ from datetime import timedelta
 import pytest
 from _statements import ACROSS, MODEL, NOW, FakeJudge, at, held, live
 
-from agentic_memory.merge import merge, merge_message
+from agentic_memory.memories import RANKING
+from agentic_memory.merge import LASTING, into_shorter, merge, merge_message
 from agentic_memory.merge_pass import merge_backlog
 
 
@@ -28,37 +31,101 @@ async def pair(store, older: tuple[str, str], newer: tuple[str, str], similarity
     return first, second
 
 
-# An older statement and its kind, then a newer one of praise.
-INTO_PRAISE = [
-    pytest.param(
-        ("Never amend a commit, make a new one.", "correction"),
-        ("Nice work on the commits.", "praise"),
-        id="a correction",
-    ),
-    pytest.param(
-        ("The store is Postgres.", "semantic"),
-        ("Good call, the store is Postgres.", "praise"),
-        id="a fact",
-    ),
+# Every pair of kinds, the older statement's first, and whether it may retire
+# into the newer one. The four durable kinds last as long as each other, a plan
+# lasts less, and praise least. The two statements hold no literal the other
+# lacks, so only the kinds decide.
+KIND_PAIRS = [
+    ("correction", "correction", True),
+    ("correction", "preference", True),
+    ("correction", "procedural", True),
+    ("correction", "semantic", True),
+    ("correction", "prospective", False),
+    ("correction", "praise", False),
+    ("preference", "correction", True),
+    ("preference", "preference", True),
+    ("preference", "procedural", True),
+    ("preference", "semantic", True),
+    ("preference", "prospective", False),
+    ("preference", "praise", False),
+    ("procedural", "correction", True),
+    ("procedural", "preference", True),
+    ("procedural", "procedural", True),
+    ("procedural", "semantic", True),
+    ("procedural", "prospective", False),
+    ("procedural", "praise", False),
+    ("semantic", "correction", True),
+    ("semantic", "preference", True),
+    ("semantic", "procedural", True),
+    ("semantic", "semantic", True),
+    ("semantic", "prospective", False),
+    ("semantic", "praise", False),
+    ("prospective", "correction", True),
+    ("prospective", "preference", True),
+    ("prospective", "procedural", True),
+    ("prospective", "semantic", True),
+    ("prospective", "prospective", True),
+    ("prospective", "praise", False),
+    ("praise", "correction", True),
+    ("praise", "preference", True),
+    ("praise", "procedural", True),
+    ("praise", "semantic", True),
+    ("praise", "prospective", True),
+    ("praise", "praise", True),
 ]
+KIND_PAIR_IDS = [f"{older} into {newer}" for older, newer, _ in KIND_PAIRS]
+
+OLDER = "Releases are cut only from main."
+NEWER = "Cut the 2.0 release after the review lands."
 
 
-@pytest.mark.parametrize(("older", "newer"), INTO_PRAISE)
+def standing(merges: bool) -> set[str]:
+    """What stays live after the pair is merged or kept apart."""
+    return {NEWER} if merges else {OLDER, NEWER}
+
+
+@pytest.mark.parametrize(("older", "newer", "merges"), KIND_PAIRS, ids=KIND_PAIR_IDS)
 @pytest.mark.parametrize("similarity", [0.90, 0.99])
 @pytest.mark.parametrize("subject", [0, 1])
 @pytest.mark.parametrize(("same", "settles"), [(True, False), (False, True)])
-async def test_nothing_but_praise_retires_into_praise(
-    store, older, newer, similarity, subject, same, settles
+async def test_a_statement_retires_only_into_a_kind_that_lasts_as_long(
+    store, older, newer, merges, similarity, subject, same, settles
 ):
-    ids = await pair(store, older, newer, similarity)
+    ids = await pair(store, (OLDER, older), (NEWER, newer), similarity)
     judge = FakeJudge(same=same, settles=settles)
-    assert await merge(store, judge, statement_id=ids[subject], model=MODEL, settings=ACROSS) == []
-    assert await live(store) == {older[0], newer[0]}
+    await merge(store, judge, statement_id=ids[subject], model=MODEL, settings=ACROSS)
+    assert await live(store) == standing(merges)
 
 
-@pytest.mark.parametrize(("older", "newer"), INTO_PRAISE)
-async def test_the_model_is_not_asked_about_a_pair_into_praise(store, older, newer):
-    ids = await pair(store, older, newer, 0.90)
+@pytest.mark.parametrize(("older", "newer", "merges"), KIND_PAIRS, ids=KIND_PAIR_IDS)
+async def test_the_write_retires_only_into_a_kind_that_lasts_as_long(store, older, newer, merges):
+    await pair(store, (OLDER, older), (NEWER, newer), 0.90)
+    merged = await merge_message(
+        store, FakeJudge(), session_id="s1", entry_id=NEWER, model=MODEL, settings=ACROSS
+    )
+    assert merged == int(merges)
+    assert await live(store) == standing(merges)
+
+
+@pytest.mark.parametrize(("older", "newer", "merges"), KIND_PAIRS, ids=KIND_PAIR_IDS)
+async def test_the_pass_retires_only_into_a_kind_that_lasts_as_long(store, older, newer, merges):
+    await pair(store, (OLDER, older), (NEWER, newer), 0.90)
+    passed = await merge_backlog(settings=ACROSS, pool=store, client=FakeJudge())
+    assert len(passed.merged) == int(merges)
+    assert await live(store) == standing(merges)
+
+
+# The pairs refused by kind, as they appear in the table above.
+REFUSED = [
+    pytest.param(older, newer, id=f"{older} into {newer}")
+    for older, newer, merges in KIND_PAIRS
+    if not merges
+]
+
+
+@pytest.mark.parametrize(("older", "newer"), REFUSED)
+async def test_the_model_is_not_asked_about_a_pair_its_kinds_keep_apart(store, older, newer):
+    ids = await pair(store, (OLDER, older), (NEWER, newer), 0.90)
     judge = FakeJudge()
     await merge(store, judge, statement_id=ids[1], model=MODEL, settings=ACROSS)
     assert judge.asked == []
@@ -196,8 +263,8 @@ async def test_a_newer_value_settles_the_older(store, older, newer, similarity):
     assert await live(store) == {newer[0]}
 
 
-# Pairs the guards let through: praise into praise, praise into another kind,
-# and a survivor that holds every literal of the older statement.
+# Pairs the guards let through: praise into praise, praise into a longer-lasting
+# kind, and a survivor that holds every literal of the older statement.
 MERGED = [
     pytest.param(
         ("Good call on the retry.", "praise"),
@@ -227,3 +294,15 @@ async def test_a_pair_the_guards_allow_merges(store, older, newer):
     ids = await pair(store, older, newer, 0.90)
     await merge(store, FakeJudge(), statement_id=ids[1], model=MODEL, settings=ACROSS)
     assert await live(store) == {newer[0]}
+
+
+def test_every_kind_a_statement_can_have_has_an_order():
+    assert set(LASTING) == set(RANKING)
+
+
+@pytest.mark.parametrize(
+    ("older", "newer"),
+    [("identity", "praise"), ("identity", "mood"), ("semantic", "identity")],
+)
+def test_a_kind_with_no_order_merges_with_nothing(older, newer):
+    assert into_shorter({"kind": older}, {"kind": newer})

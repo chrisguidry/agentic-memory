@@ -104,8 +104,14 @@ statements retired into newer general or approving ones, and 17 statements
 that were not praise retired into praise. Two rules apply on the write
 and in the pass, in one kind and across kinds:
 
-- A statement never retires into praise unless it is praise, at any
-  similarity and under both questions.
+- A statement retires only into one whose kind lasts at least as long, at
+  any similarity and under both questions. Correction, preference,
+  procedural, and semantic last as long as each other, prospective lasts
+  less, and praise least. When the rule kept only praise apart, a pass
+  retired 150 statements, and a judge found 10 of 30 sampled merges wrong.
+  In that pass, 17 durable statements retired into prospective, where a
+  rule fades in weeks or ends when a plan's moment passes. `LASTING` in `merge.py` declares the
+  order, because the ranking weighs praise above prospective.
 - A statement retires into one that says the same thing, by the upper
   cutoff or by the first question, only when that one holds all its
   literals, such as a URL, a flag, a path, a file or host name, a name from
@@ -160,4 +166,13 @@ and the start comes before the end.
 - **Whether the survivor should take the kind with the higher weight.** A
   decision that was first written as praise and then as semantic keeps
   semantic, because the newer survives. In the reverse order both stand,
-  because a statement never retires into praise unless it is praise.
+  because a statement retires only into a kind that lasts at least as long.
+  A rule written as procedural and then restated in a plan also keeps both,
+  so a reader is handed the rule and the plan side by side until the plan
+  fades. A plan that settles a rule differently, such as "cut the next
+  release from the hotfix branch" against "releases are cut only from main",
+  also leaves both live, and they disagree until the plan ends. When the
+  plan is a decision, the sort writes it again as a durable statement before
+  the merge runs, and that statement retires the rule. Whether the newer
+  statement should retire into the older one when the older one lasts
+  longer is not settled.

@@ -20,15 +20,16 @@ asked two questions: whether the two say the same thing, and whether the newer
 one settles the question the older one settled, in a different way. Below the
 lower cutoff they are different enough that nothing is compared.
 
-Two rules keep a pair apart. A statement never retires into praise unless it
-is praise. A statement retires into one that says the same thing, by the upper
-cutoff or by the first question, only when that one holds all its literals,
-such as a URL or a flag. Without them, a specific fact retires into a general
-or approving statement said after it, and no live statement holds the fact. A
-pair the first question calls the same thing stands when a literal is lacking,
-whatever the second question says. The second question otherwise keeps only
-the first rule, because a newer statement that settles an older one in a
-different way changes a value on purpose.
+Two rules keep a pair apart. A statement retires only into one whose kind
+lasts at least as long: the four durable kinds into each other, a plan into a
+plan or a durable kind, and praise into anything. A statement retires into one
+that says the same thing, by the upper cutoff or by the first question, only
+when that one holds all its literals, such as a URL or a flag. Without them, a
+specific fact retires into a general or approving statement said after it, and
+no live statement holds the fact. A pair the first question calls the same
+thing stands when a literal is lacking, whatever the second question says. The
+second question otherwise keeps only the first rule, because a newer statement
+that settles an older one in a different way changes a value on purpose.
 """
 
 import asyncio
@@ -195,14 +196,39 @@ async def answers(client: Judge, older: str, newer: str) -> dict[str, float] | N
     return {name: response.nouls[name].noul for name in QUESTIONS}
 
 
-def into_praise(older: Any, newer: Any) -> bool:
-    """Whether the older statement would retire into praise without being praise.
+# How long each kind of statement stays true, longest first. A statement
+# retires only into one whose kind lasts at least as long, because the survivor
+# is all a reader keeps. A rule retired into a plan fades in weeks or ends when
+# the plan's moment passes, and a plan retired into praise is gone, because
+# praise approves an outcome and holds less than the plan it approves.
+#
+# The four durable kinds are one tier, so a fact and the rule it becomes still
+# merge. A kind with no entry merges with nothing, because nobody has decided
+# how long it lasts, and a new kind that could retire into praise would vanish
+# before anyone noticed it was missing here.
+#
+# `RANKING` in `memories.py` is a different order, so this one is declared
+# here. Its weights and half-lives measure how long a statement is worth
+# reading, and they put praise above prospective. Its floors set the durable
+# kinds apart from the others and make praise and prospective equal.
+LASTING = {
+    "correction": 2,
+    "preference": 2,
+    "procedural": 2,
+    "semantic": 2,
+    "prospective": 1,
+    "praise": 0,
+}
 
-    Praise is weighed at half and has no floor, so a correction or a fact
-    retired into praise drops out of the reads within weeks. Praise that
-    approves a decision also says less than the decision.
+
+def into_shorter(older: Any, newer: Any) -> bool:
+    """Whether the older statement would retire into a kind that lasts less.
+
+    A pair where either kind has no entry is kept apart, as though it would.
     """
-    return newer["kind"] == "praise" and older["kind"] != "praise"
+    if older["kind"] not in LASTING or newer["kind"] not in LASTING:
+        return True
+    return LASTING[newer["kind"]] < LASTING[older["kind"]]
 
 
 async def why(client: Judge, subject: Any, neighbour: Any, settings: Settings) -> Reason | None:
@@ -219,8 +245,10 @@ async def why(client: Judge, subject: Any, neighbour: Any, settings: Settings) -
     older, newer = sorted([subject, neighbour], key=placed)
     # This rule holds at any similarity and under both questions, so it comes
     # first, and a pair it keeps apart costs no call.
-    if into_praise(older, newer):
-        log.debug("statement %s stays beside praise %s", older["id"], newer["id"])
+    if into_shorter(older, newer):
+        log.debug(
+            "%s %s stays beside %s %s", older["kind"], older["id"], newer["kind"], newer["id"]
+        )
         return None
     lacking = lacks(older["statement"], newer["statement"])
     # A pair above the upper cutoff that differs in a literal is one sentence
