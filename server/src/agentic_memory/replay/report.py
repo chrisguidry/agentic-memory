@@ -83,6 +83,10 @@ class Report:
     statements: int = 0
     unscoped: int = 0
     labelled: int = 0
+    # The `opening` form is a turn of a session that was handed nothing yet,
+    # whether or not the opening list is on. With the list off, its turns are
+    # handed only what the match found, and a session stays in the form until
+    # the match hands it something.
     forms: dict[Form, Counts] = field(default_factory=dict)
     kinds: Counter = field(default_factory=Counter)
     labels: Counter = field(default_factory=Counter)

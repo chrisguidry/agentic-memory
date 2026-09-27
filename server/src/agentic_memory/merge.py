@@ -19,6 +19,16 @@ embedding cannot tell a negation from its opposite, so the System One model is
 asked two questions: whether the two say the same thing, and whether the newer
 one settles the question the older one settled, in a different way. Below the
 lower cutoff they are different enough that nothing is compared.
+
+Two rules keep a pair apart. A statement never retires into praise unless it
+is praise. A statement retires into one that says the same thing, by the upper
+cutoff or by the first question, only when that one holds all its literals,
+such as a URL or a flag. Without them, a specific fact retires into a general
+or approving statement said after it, and no live statement holds the fact. A
+pair the first question calls the same thing stands when a literal is lacking,
+whatever the second question says. The second question otherwise keeps only
+the first rule, because a newer statement that settles an older one in a
+different way changes a value on purpose.
 """
 
 import asyncio
@@ -30,6 +40,7 @@ import asyncpg
 from typesafe_sdk import Noul, TypeSafeBadRequestError
 
 from .ledger import calling
+from .literals import lacks
 from .memories import live, retire
 from .settings import Settings
 
@@ -157,8 +168,9 @@ NEIGHBOURS = f"""
 
 # Marks a statement as compared with its neighbours. The writer's task and the
 # pass merge the statements that have no mark, so a retry finishes what a
-# failed attempt left, and no pair is asked about twice.
-COMPARED = "UPDATE memories SET merged_at = now() WHERE id = $1"
+# failed attempt left, and no pair is asked about twice. The run is recorded so
+# an undo of that run clears the mark and a rerun asks again.
+COMPARED = "UPDATE memories SET merged_at = now(), merged_by_run = $2 WHERE id = $1"
 
 
 def placed(row: Any) -> tuple:
@@ -183,16 +195,47 @@ async def answers(client: Judge, older: str, newer: str) -> dict[str, float] | N
     return {name: response.nouls[name].noul for name in QUESTIONS}
 
 
+def into_praise(older: Any, newer: Any) -> bool:
+    """Whether the older statement would retire into praise without being praise.
+
+    Praise is weighed at half and has no floor, so a correction or a fact
+    retired into praise drops out of the reads within weeks. Praise that
+    approves a decision also says less than the decision.
+    """
+    return newer["kind"] == "praise" and older["kind"] != "praise"
+
+
 async def why(client: Judge, subject: Any, neighbour: Any, settings: Settings) -> Reason | None:
-    """Why the older of two statements retires into the newer, or none when both stand."""
-    if neighbour["similarity"] >= settings.merge_upper:
-        return "cutoff"
+    """Why the older of two statements retires into the newer, or none when both stand.
+
+    A pair that says the same thing merges only when the newer statement holds
+    every literal of the older one, because a general statement that retires a
+    specific one loses the details a reader copies. A newer statement that
+    settles the older one in a different way changes a value on purpose, such
+    as port 8080 to 9090, so that merge does not ask for the literals. It is
+    asked only when the first question says no, because a pair that says the
+    same thing without a literal is not a changed value.
+    """
     older, newer = sorted([subject, neighbour], key=placed)
+    # This rule holds at any similarity and under both questions, so it comes
+    # first, and a pair it keeps apart costs no call.
+    if into_praise(older, newer):
+        log.debug("statement %s stays beside praise %s", older["id"], newer["id"])
+        return None
+    lacking = lacks(older["statement"], newer["statement"])
+    # A pair above the upper cutoff that differs in a literal is one sentence
+    # with a value changed, so the model is asked whether the newer one settles
+    # the older.
+    if neighbour["similarity"] >= settings.merge_upper and not lacking:
+        return "cutoff"
     found = await answers(client, older["statement"], newer["statement"])
     if found is None:
         return None
     if found["same"] >= YES:
-        return "same"
+        # A yes here with a literal lacking is a general statement of the same
+        # thing, not a new value. The second question would retire the older
+        # one into it and lose the literal, so the pair stands.
+        return None if lacking else "same"
     # Two statements said at one moment, such as two kinds from one message,
     # have no newer one, so neither can have changed the other's answer.
     if newer["said_at"] > older["said_at"] and found["settles"] >= settings.merge_settles:
@@ -271,7 +314,9 @@ async def merge(
     merged = []
     async with pool.acquire() as connection, connection.transaction():
         for retiring, survivor, reason in pairs:
-            ended = await retire(connection, replaced=[retiring["id"]], replacement=survivor["id"])
+            ended = await retire(
+                connection, replaced=[retiring["id"]], replacement=survivor["id"], run=run
+            )
             merged += [
                 Merged(
                     retired=retiring["id"],
@@ -281,7 +326,7 @@ async def merge(
                 )
                 for _ in ended
             ]
-        await connection.execute(COMPARED, statement_id)
+        await connection.execute(COMPARED, statement_id, run)
     if merged:
         log.info("merged %s statements with %s", len(merged), statement_id)
     return merged

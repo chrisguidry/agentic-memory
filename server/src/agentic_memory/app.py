@@ -260,10 +260,11 @@ class LiveAsk(recall.Ask):
 async def recall_for_turn(request: Request, ask: LiveAsk) -> dict:
     """What a turn is handed.
 
-    A session's first ask gets the top of its scope's list. Every ask after it
-    gets the statements that are about the prompt, or nothing. Both leave out
-    what this session was already handed, and both are recorded while the
-    client waits, so the outcome flow has something to join to.
+    Every ask gets the statements that are about the prompt, or nothing. When
+    the opening limit is above 0, a session's first ask also gets the top of
+    its scope's list. Both leave out what this session was already handed, and
+    both are recorded while the client waits, so the outcome flow has something
+    to join to.
     """
     metrics.MISSES.inc(ask.missed)
 

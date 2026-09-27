@@ -238,12 +238,20 @@ async def test_reading_by_said_at_places_each_statement_at_its_message(
 
 
 # A statement written from a prompt carries that prompt's moment as its
-# said_at, and it did not exist yet when the prompt was said.
-async def test_reading_by_said_at_does_not_hand_a_prompt_its_own_statement(store, embedder):
-    await held(store, "the rule", LATER, said_at=MONDAY)
+# said_at, and it did not exist yet when the prompt was said. A statement said
+# before the prompt is handed, so the list is on and can hand it.
+@pytest.mark.parametrize(
+    "said_at, expected",
+    [(MONDAY, []), (MONDAY - timedelta(seconds=1), ["the rule"])],
+    ids=["said-by-the-prompt", "said-before-the-prompt"],
+)
+async def test_reading_by_said_at_does_not_hand_a_prompt_its_own_statement(
+    store, embedder, said_at, expected
+):
+    await held(store, "the rule", LATER, said_at=said_at)
     await said(store, "a", "a1", "start", MONDAY)
-    [turn] = await replayed(store, embedder, by_said_at=True)
-    assert handed(turn) == []
+    [turn] = await replayed(store, embedder, settings=OPENING, by_said_at=True)
+    assert handed(turn) == expected
 
 
 async def test_reading_by_said_at_needs_a_moment(store, embedder):

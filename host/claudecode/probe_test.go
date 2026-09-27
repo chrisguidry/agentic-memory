@@ -89,7 +89,9 @@ func TestAProbePrintsWhatALiveTurnPrints(t *testing.T) {
 }
 
 // A probe session is sent what the bastion handed it before, because the
-// service records nothing for a probe. SessionEnd forgets the session.
+// service records nothing for a probe. Each `claude -p` process ends its
+// session, and `claude -p --resume` goes on with it, so SessionEnd forgets
+// nothing.
 func TestAProbeSessionSendsWhatItWasHanded(t *testing.T) {
 	at := newService(t,
 		recall.Statement{ID: 9, Statement: "Commit messages say why."},
@@ -114,7 +116,7 @@ func TestAProbeSessionSendsWhatItWasHanded(t *testing.T) {
 		{SessionID: "probe-a"},
 		{SessionID: "probe-a", Seen: []int64{7, 9}},
 		{SessionID: "probe-b"},
-		{SessionID: "probe-a"},
+		{SessionID: "probe-a", Seen: []int64{7, 9}},
 	}) {
 		t.Errorf("got the probes %+v", at.probes)
 	}

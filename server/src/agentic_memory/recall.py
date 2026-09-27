@@ -1,9 +1,10 @@
 """The turn path: what a session is handed, and the record of it.
 
 A turn starts, the client asks, and this answers. Every prompt is handed only
-the statements that are about it, found by `match`, or nothing. A session's
-first ask is also handed the top of its scope's list, from the statements that
-have a scope. Both leave out what the session was already handed. No model is
+the statements that are about it, found by `match`, or nothing. When the
+opening limit is above 0, a session's first ask is also handed the top of its
+scope's list, from the statements that have a scope. Both leave out what the
+session was already handed. No model is
 called over a network here: the prompt is embedded in the process, and the rest
 is reads of answers the worker wrote earlier, because a person is waiting.
 
@@ -85,10 +86,11 @@ HANDED = """
 """
 
 # The forms a turn takes. `opening` is a session that has been handed nothing
-# yet, which is handed the statements about the prompt and the top of the
-# scope's list. `match` is every ask after that, handed only the statements
-# about the prompt. `plumbing` is a prompt the harness wrote for itself, which is
-# handed nothing.
+# yet, which is handed the statements about the prompt, and the top of the
+# scope's list when the opening limit is above 0. With the limit at 0, a session
+# stays in this form until the match hands it something. `match` is every ask
+# after that, handed only the statements about the prompt. `plumbing` is a
+# prompt the harness wrote for itself, which is handed nothing.
 Form = Literal["opening", "match", "plumbing"]
 
 
@@ -133,8 +135,8 @@ class Ask(BaseModel):
     session_id: str
     harness: str
     scope_key: str | None = None
-    # What the person typed, so a turn after the first can be handed what is
-    # about it. Empty means the session's first ask is the only form served.
+    # What the person typed, so a turn can be handed what is about it. Empty
+    # means only the opening list is served, and only when its limit is above 0.
     prompt: str = ""
     limit: int = Field(LIMIT, ge=1, le=LIMIT)
 
@@ -177,7 +179,13 @@ async def opening(
     as_of: datetime | None = None,
     by_said_at: bool = False,
 ) -> list[dict]:
-    """The top of the scope's list at a moment, less what the session saw."""
+    """The top of the scope's list at a moment, less what the session saw.
+
+    A limit of 0 turns the list off. A session that was handed nothing asks
+    for its list on every turn, so with the list off the query is not run.
+    """
+    if limit <= 0:
+        return []
     with phase("opening"):
         found = await pool.fetch(UNSEEN, scope_key, list(seen), as_of, by_said_at)
     return ranked((dict(row) for row in found), now)[: min(limit, LIMIT)]
@@ -203,8 +211,9 @@ async def choose(
     now with each statement placed at the moment its message was said.
 
     A short prompt whose nearest readings mostly held no memory is handed
-    nothing, the opening list included, so a session that opens with a reply gets its
-    list on the first prompt that has a subject.
+    nothing, the opening list included. When the opening limit is above 0, a
+    session that opens with a reply gets its list on the first prompt that has
+    a subject.
     """
     if by_said_at and as_of is None:
         raise ValueError("reading by said_at places statements before a moment, so it needs as_of")
@@ -282,7 +291,9 @@ async def turn(
     waiting: Callable[[], Awaitable[bool]] | None = None,
     probe: Probe | None = None,
 ) -> Handout:
-    """What this turn is handed: the match, and the opening list on a session's first ask.
+    """What this turn is handed: the match, and on a session's first ask the opening list.
+
+    The opening list is handed only when its limit is above 0.
 
     `waiting` says whether the client is still waiting for the answer. A
     statement recorded for a client that stopped waiting never reached the

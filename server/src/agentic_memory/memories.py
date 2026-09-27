@@ -145,9 +145,12 @@ STANDING = (
 # The replacement has to be live when the pointer is written, in the same
 # statement. A replacement that ended or was itself replaced after a caller
 # chose it would otherwise take the statement out of every read with it.
+#
+# `$4` is the merge run that retired the statement, and null for a retirement
+# that is not a merge.
 RETIRE = f"""
     UPDATE memories
-    SET superseded_by = $2, superseded_at = $3
+    SET superseded_by = $2, superseded_at = $3, retired_by_run = $4
     WHERE id = $1 AND {live()}
       AND EXISTS (SELECT 1 FROM memories r WHERE r.id = $2 AND {live("r")})
 """
@@ -269,6 +272,7 @@ async def retire(
     replaced: Iterable[int],
     replacement: int,
     now: datetime | None = None,
+    run: str | None = None,
 ) -> list[int]:
     """End the statements a newer one replaces, and say which ones ended.
 
@@ -277,13 +281,16 @@ async def retire(
     learns that something stopped being true at a different moment from when it
     stopped, and the two are kept apart on purpose. A connection in a
     transaction retires them as part of that transaction.
+
+    `run` names the merge run that retires them, so that run can be undone
+    alone.
     """
     moment = now or datetime.now(UTC)
     ended = []
     for statement_id in replaced:
         if statement_id == replacement:
             continue
-        result = await pool.execute(RETIRE, statement_id, replacement, moment)
+        result = await pool.execute(RETIRE, statement_id, replacement, moment, run)
         if result.endswith(" 1"):
             ended.append(statement_id)
     return ended

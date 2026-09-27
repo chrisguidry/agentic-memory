@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     # list is the same few statements for every session in a scope, whatever
     # it is about, and over 90 probe sessions it was relevant about 2 times in
     # 70, so it is off unless a deployment asks for it.
-    recall_opening_limit: int = 0
+    recall_opening_limit: int = Field(0, ge=0)
     recall_prompt_limit: int = 5
 
     # How far above the ninety-ninth percentile of the scope's similarities a

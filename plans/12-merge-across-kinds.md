@@ -98,6 +98,37 @@ the pass goes on, and a second run asks only about what is unmarked. Over
 the whole table it asks at most about 870 pairs, at about 710 input tokens
 each.
 
+A pass with merging across kinds on retired 223 statements, and a judge
+found 11 of 30 sampled merges wrong. In the wrong merges, specific
+statements retired into newer general or approving ones, and 17 statements
+that were not praise retired into praise. Two rules apply on the write
+and in the pass, in one kind and across kinds:
+
+- A statement never retires into praise unless it is praise, at any
+  similarity and under both questions.
+- A statement retires into one that says the same thing, by the upper
+  cutoff or by the first question, only when that one holds all its
+  literals, such as a URL, a flag, a path, a file or host name, a name from
+  code, or a version. `literals.py` defines what a literal is. A pair the
+  first question calls the same thing stands when a literal is lacking,
+  whatever the second question says. The second question otherwise does not
+  apply this rule, because a newer statement that settles an older one in a
+  different way changes a value on purpose, such as a port from 8080 to
+  9090. A pair above the upper cutoff that differs in a literal is asked the
+  two questions.
+
+Each merge records its run on the statements it retires and compares, and
+`agentic-memory-backfill unmerge --run <name>` undoes one run: its retired
+statements are live again, except the ones retired into the same text, and
+its comparison marks are cleared, so a rerun asks again. `--dry-run` prints
+the ids it would change and changes nothing. The runs the writer merges
+under are refused: `live`, `write`, `reread`, and `sweep` by name, and any
+run with a classify or synthesize call in the ledger, because `/write` and
+`/reread` take a run of any name. The merges made before the run was
+recorded are found by a window of time, `--since` to `--until`, which also
+finds the corrections and the sorts in it, so the window needs both ends,
+and the start comes before the end.
+
 ## The contracts
 
 - The merge's second question has its own threshold, which is a setting.
@@ -128,5 +159,5 @@ each.
   merge compares one kind at a time until a question separates them.
 - **Whether the survivor should take the kind with the higher weight.** A
   decision that was first written as praise and then as semantic keeps
-  semantic, because the newer survives. The reverse order would keep
-  praise, and the ranking weighs praise at half.
+  semantic, because the newer survives. In the reverse order both stand,
+  because a statement never retires into praise unless it is praise.

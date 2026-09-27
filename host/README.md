@@ -127,22 +127,35 @@ For a probe event, the bastion does these things:
 - It keeps the ids of the statements it handed each probe session in memory,
   and sends them as `"seen"` with the session's next probe. The next prompt
   then takes the match form, as it would in a live session. `SessionEnd`
-  forgets the session, and so does a restart of the bastion.
+  forgets nothing, because each `claude -p` process ends its session and
+  `claude -p --resume` goes on with it. The bastion keeps the 1,000 probe
+  sessions it used last, and forgets the one it used longest ago to make
+  room. A restart of the bastion forgets every session.
 - A probe that misses the deadline is not counted. The `missed` count that
   goes with the next live recall holds only live misses.
 
-Never resume or continue a probe session. `claude --resume` writes a new
-transcript that copies the probe's conversation, at a path the bastion has
-never marked, and a live event ships it. Never start a probe from a person's
-own session either, because a probe event marks the transcript it names, and
-a marked transcript never ships again. A clone outside the person's own trees
-keeps `claude --continue` in a real tree from picking up a probe session.
+To go on with a probe session, resume it with the variable set:
+
+    AGENTIC_MEMORY_PROBE=1 claude -p --resume <session> "and the fixtures?"
+
+A resumed session keeps its session id, so every turn after the first takes
+the match form, and each event is a probe event. Never resume or continue a
+probe session without the variable. Its events are then live events: the
+bastion ships nothing of a marked transcript, but each prompt asks the live
+`POST /recall`, and the service records what it hands a live session.
+
+Never start a probe from a person's own session, because a probe event marks
+the transcript it names, and a marked transcript never ships again. A clone
+outside the person's own trees keeps `claude --continue` in a real tree from
+picking up a probe session.
 
 The service chooses a probe's statements on the same path as a live turn's:
 the plumbing filter, the filter for short replies, the match, and the opening
-list. It writes no injection row. It counts a probe under
-`agentic_memory_probe_recalls_total`, by form and outcome, so the live
-`agentic_memory_recalls_total` holds only what a person's sessions asked. The
+list when the service's opening limit is above 0. It writes no injection row.
+It counts a probe under `agentic_memory_probe_recalls_total`, by form and
+outcome, so the live `agentic_memory_recalls_total` holds only what a person's
+sessions asked. The `opening` form is a session that was handed nothing yet,
+whether or not the opening list is on. The
 latency histograms count probes and live recalls together. `POST /recall`
 refuses a body with `probe`, `seen`, or any other field it does not name, and
 `POST /recall/probe` refuses `missed`, with 422.

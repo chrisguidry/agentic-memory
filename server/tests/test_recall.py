@@ -10,8 +10,10 @@ from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import pytest
+from pydantic import ValidationError
 
 from agentic_memory.embed import Embedder, embed_missing
+from agentic_memory.metrics import REGISTRY
 from agentic_memory.recall import LIMIT, opening, seen_by, turn
 from agentic_memory.settings import Settings
 
@@ -128,3 +130,33 @@ async def test_a_first_turn_records_what_it_matched_apart_from_what_it_listed(em
 async def test_what_a_session_saw_is_every_form_it_was_handed(embedded, embedder):
     handout = await first_turn(embedded, embedder)
     assert await seen_by(embedded, "s1") == {row["id"] for row in handout.statements}
+
+
+def lists_read() -> float:
+    """How many times a recall has read a scope's list, as the metrics count it."""
+    return (
+        REGISTRY.get_sample_value("agentic_memory_recall_seconds_count", {"phase": "opening"}) or 0
+    )
+
+
+# With the list off, a session that was handed nothing keeps the opening form on
+# every turn, so a read of the list on that form would run on every one of them.
+@pytest.mark.parametrize(("limit", "reads"), [(0, 0), (3, 1)], ids=["off", "on"])
+async def test_a_turn_reads_the_list_only_when_it_is_on(store, embedder, limit, reads):
+    before = lists_read()
+    await turn(
+        store,
+        embedder,
+        Settings(recall_opening_limit=limit),
+        session_id="s1",
+        harness="pi",
+        scope_key="github.com/liken-sh/liken",
+        prompt="",
+        now=NOW,
+    )
+    assert lists_read() - before == reads
+
+
+def test_the_list_takes_no_negative_limit():
+    with pytest.raises(ValidationError, match="recall_opening_limit"):
+        Settings(recall_opening_limit=-1)

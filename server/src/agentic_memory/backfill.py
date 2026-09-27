@@ -7,14 +7,16 @@ call in the ledger under a named run. `sort` asks it the sort's questions about
 every live prospective statement the sort has not answered, and writes where
 each one goes, under a named run the same way. `merge` compares every live
 statement with the ones said before it, under the merge's current questions,
-and records its calls the same way. `readings` embeds the prompt of every
-reading, with the local model and no network call.
+and records its calls the same way. `unmerge` undoes what one merge run
+retired, with no model call. `readings` embeds the prompt of every reading,
+with the local model and no network call.
 """
 
 import argparse
 import asyncio
 import sys
 from collections import Counter
+from datetime import datetime
 
 import asyncpg
 
@@ -29,6 +31,20 @@ from .readings import BATCH, embed_readings
 from .settings import get_settings
 from .sorting import TASK as SORT
 from .sorting import sort, unsorted
+from .unmerge import WRITERS, Refused, undo
+
+
+def moment(text: str) -> datetime:
+    """A moment with its offset from UTC.
+
+    A moment with no offset is refused, because the store and the person
+    running the command can be in two time zones, and a window read in the
+    wrong one restores the wrong retirements.
+    """
+    found = datetime.fromisoformat(text)
+    if found.tzinfo is None:
+        raise argparse.ArgumentTypeError(f"{text} has no offset from UTC, such as +00:00")
+    return found
 
 
 def parser() -> argparse.ArgumentParser:
@@ -88,6 +104,55 @@ def parser() -> argparse.ArgumentParser:
         "--again",
         action="store_true",
         help="compare the statements already compared too, as after a change to the questions",
+    )
+
+    unmerging = kinds.add_parser(
+        "unmerge",
+        help=(
+            "make the statements one merge run retired live again, except the ones it"
+            " retired into the same text, and clear the comparison mark on the statements"
+            " it compared, so a rerun asks about them again"
+        ),
+    )
+    unmerging.add_argument(
+        "--run",
+        required=True,
+        help=(
+            "the name of the merge run to undo. The runs the writer merges under are"
+            f" refused: {', '.join(sorted(WRITERS))}, and any run with a classify or"
+            " synthesize call in the ledger, such as a /reread run. Undoing one restores"
+            " every statement the writer retired under it"
+        ),
+    )
+    unmerging.add_argument(
+        "--since",
+        type=moment,
+        default=None,
+        help=(
+            "also undo the merges that record no run, from this moment, such as"
+            " 2026-09-27T06:00+00:00, up to --until. A merge made before the merge"
+            " recorded its run records none, and neither does a correction or the"
+            " sort. In the window, every retirement with no run whose survivor's text"
+            " differs from its own is restored, a correction or a sort included, and"
+            " every comparison mark with no run is cleared"
+        ),
+    )
+    unmerging.add_argument(
+        "--until",
+        type=moment,
+        default=None,
+        help=(
+            "the end of the --since window, which is not in it. Each needs the other,"
+            " and the start comes before the end"
+        ),
+    )
+    unmerging.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "print the statements an undo would restore and the marks it would clear,"
+            " and change nothing"
+        ),
     )
 
     prompts = kinds.add_parser(
@@ -207,6 +272,28 @@ async def merge(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
     )
 
 
+async def unmerge(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
+    try:
+        undone = await undo(
+            pool,
+            run=arguments.run,
+            since=arguments.since,
+            until=arguments.until,
+            dry_run=arguments.dry_run,
+        )
+    except Refused as refused:
+        raise SystemExit(str(refused)) from None
+    restore, clear = (
+        ("would restore", "would clear") if arguments.dry_run else ("restored", "cleared")
+    )
+    return (
+        f"{restore} {len(undone.restored)} statements the run {arguments.run} retired:"
+        f" {' '.join(map(str, undone.restored))}\n"
+        f"{clear} the comparison mark on {len(undone.reopened)} statements,"
+        f" so a rerun asks about them again: {' '.join(map(str, undone.reopened))}\n"
+    )
+
+
 async def readings(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
     settings = get_settings()
     embedder = await asyncio.to_thread(load, settings)
@@ -224,6 +311,8 @@ async def run(arguments: argparse.Namespace) -> str:
             return await prospective(pool, arguments)
         if arguments.backfill == "merge":
             return await merge(pool, arguments)
+        if arguments.backfill == "unmerge":
+            return await unmerge(pool, arguments)
         return await readings(pool, arguments)
     finally:
         await pool.close()

@@ -111,7 +111,7 @@ class TestKinds:
         survivor = await store.fetchrow("SELECT id, kind FROM memories WHERE superseded_by IS NULL")
         assert (survivor["id"], survivor["kind"]) == (newer, "semantic")
 
-    async def test_praise_survives_when_it_was_said_last(self, store):
+    async def test_a_fact_stands_beside_praise_said_after_it(self, store):
         await held(
             store,
             "The widget's releases go out on a signed tag.",
@@ -126,7 +126,7 @@ class TestKinds:
             said_at=NOW,
         )
         await merge(store, FakeJudge(same=True), statement_id=newer, model=MODEL, settings=ACROSS)
-        assert await live(store) == {"The signed-tag release of the widget went well."}
+        assert len(await live(store)) == 2
 
     async def test_two_kinds_that_differ_both_stand(self, store):
         older = await held(

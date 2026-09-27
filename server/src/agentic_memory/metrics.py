@@ -29,7 +29,9 @@ PHASES = Histogram(
 )
 
 # `gone` is a recall whose client stopped waiting before its statements were
-# recorded, so nothing was recorded for it.
+# recorded, so nothing was recorded for it. The `opening` form is a recall for a
+# session that was handed nothing yet, whether or not the opening list is on,
+# so with the list off it counts turns the match alone chose for.
 RECALLS = Counter(
     "agentic_memory_recalls",
     "Recalls by the form the turn path took and what came of it.",

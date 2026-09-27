@@ -156,7 +156,7 @@ UNEMBEDDED = f"""
 # statement marked and never compared under the new one.
 STORE = """
     UPDATE memories
-    SET embedding = $2::vector, embedding_model = $3, merged_at = NULL
+    SET embedding = $2::vector, embedding_model = $3, merged_at = NULL, merged_by_run = NULL
     WHERE id = $1
 """
 

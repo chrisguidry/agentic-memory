@@ -236,7 +236,7 @@ class TestRetire:
     async def test_the_moment_recorded_is_when_the_service_learned(self):
         pool = FakePool()
         await retire(pool, replaced=[7], replacement=9, now=NOW)
-        assert pool.ran == [(7, 9, NOW)]
+        assert pool.ran == [(7, 9, NOW, None)]
 
 
 async def held(store: asyncpg.Pool, scope_key: str | None, statement: str = "a rule") -> int:

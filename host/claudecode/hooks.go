@@ -82,9 +82,6 @@ func (h *Hooks) serve(w http.ResponseWriter, r *http.Request, probe bool) {
 	// A probe ships nothing, so the session's prompts never reach the store.
 	if probe {
 		h.logf("%s: probe %s, nothing shipped", event.SessionID, event.HookEventName)
-		if event.HookEventName == "SessionEnd" {
-			h.probes.forget(event.SessionID)
-		}
 		return
 	}
 

@@ -382,6 +382,13 @@ ALTER TABLE memories ADD COLUMN IF NOT EXISTS sorted_at timestamptz;
 -- a statement already compared is not asked about again.
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS merged_at timestamptz;
 
+-- The merge run that compared the statement, and the merge run that retired it
+-- into another. `agentic-memory-backfill unmerge` reads them to undo one run
+-- and leave every other run's merges in place. A retirement that is not a
+-- merge, such as a correction, has no run here.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS merged_by_run text;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS retired_by_run text;
+
 -- One statement per message per kind per question set, so a retry writes
 -- nothing and one message can carry a fact and a rule at once.
 CREATE UNIQUE INDEX IF NOT EXISTS memories_source
