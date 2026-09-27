@@ -14,7 +14,7 @@ listens on the network.
     agentic-memory top        watch what the memory loop is producing
     agentic-memory version    print the version
 
-`bastion` answers two routes itself and proxies the rest to the service with
+`bastion` answers three routes itself and proxies the rest to the service with
 the authorization header added.
 
 - `POST /claude-code/hooks` takes Claude Code's hook payload. On
@@ -27,10 +27,14 @@ the authorization header added.
 - `POST /transcripts/ship` takes `{"harness", "path", "machine", "cwd"}` and
   answers with `received`, `inserted`, and `repeated` summed over every batch
   the file took, so a caller sees the whole file.
+- `GET /transcripts/behind` answers `{"behind": 2}`: how many files the
+  bastion has not shipped yet.
 
-`top` polls the socket for `GET /memories` and `GET /classifications`, and draws
-three panels: what is worth remembering for this directory's scope, what the
-writer has just produced, and what the classifier has just read. `--scope` names
+`top` polls the socket for `GET /memories`, `GET /classifications`, and
+`GET /transcripts/behind`, and draws three panels: what is worth remembering
+for this directory's scope, what the writer has just produced, and what the
+classifier has just read. The status line under them says how many
+transcripts are behind, when any are. `--scope` names
 another scope and `--all-scopes` reads every one. `--limit`, `--new`, and
 `--read` are upper bounds on the three panels, and the frame gives way from the
 top down until it fits the terminal. `--every` is the seconds between polls.
@@ -70,8 +74,37 @@ The bastion reads these, and nothing else on the machine holds them:
 | `AGENTIC_MEMORY_SOCKET` | `$XDG_RUNTIME_DIR/agentic-memory.sock` |
 
 `AGENTIC_MEMORY_SOCKET` is read by the bastion and by every client, so both
-ends agree without either holding the other's configuration. Offsets are kept
-under `$XDG_STATE_HOME/agentic-memory/claude-code/`.
+ends agree without either holding the other's configuration.
+
+## The state
+
+The bastion keeps one record per transcript under
+`$XDG_STATE_HOME/agentic-memory/claude-code/`, which defaults to
+`~/.local/state/agentic-memory/claude-code/`. The file name is a hash of the
+transcript's path. Each record has mode 0600 and holds the offset the bastion
+has shipped to, a fingerprint of the file's head, and the first `cwd` and
+`version` the file carried. The bastion writes a record to a temporary file
+and renames it into place, so a record is never half written.
+
+A record also holds a `behind` object while the service has not taken what
+the file gained: the request to send again, how long to wait, and when. A
+restarted bastion reads every record with a `behind` object and ships each
+file from its saved offset. The bastion sends a file in batches of 200 lines
+and saves the offset after each batch the service takes, so a file that fails
+partway resumes after the last batch taken, and no line is sent twice.
+
+## When a transcript does not ship
+
+A failure to ship has one of three causes, and each has its own handling.
+
+| cause | example | handling |
+| --- | --- | --- |
+| the file does not exist yet | a session's first prompt, before Claude Code writes the transcript | wait up to two minutes for it, then drop it |
+| the file is gone | a transcript deleted after the bastion shipped from it, a directory, a file the person cannot read | one line in the journal, then drop it |
+| the service or the network failed | a 503, a DNS failure, a TLS error | retry after 5 seconds, doubling to at most 5 minutes, with no limit on attempts |
+
+A dropped file loses nothing the file still holds. Its offset stays in its
+record, and the next event in that session ships from there.
 
 ## Running it
 

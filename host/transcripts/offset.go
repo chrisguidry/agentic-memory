@@ -26,6 +26,8 @@ type offset struct {
 	Head    string `json:"head"`
 	Cwd     string `json:"cwd"`
 	Version string `json:"version"`
+	// Behind is set while the file has lines the service has not taken.
+	Behind *behind `json:"behind,omitempty"`
 }
 
 // offsetFile names the state file for a transcript. The name is a hash of the
@@ -51,6 +53,10 @@ func readOffset(name string) offset {
 	return found
 }
 
+// writeOffset replaces a record whole. It writes a temporary file and renames it
+// over the record, so a bastion stopped in the middle of a write leaves the old
+// record or the new one. A half-written record reads as a file never seen, and
+// the whole transcript is sent again.
 func writeOffset(name string, found offset) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 		return err
@@ -59,7 +65,25 @@ func writeOffset(name string, found offset) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(name, raw, 0o600)
+	// CreateTemp makes the file with mode 0600, and the rename keeps the mode.
+	// The name does not end in .json, so Resume never reads a leftover one.
+	temporary, err := os.CreateTemp(filepath.Dir(name), ".offset-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temporary.Name())
+	if _, err := temporary.Write(raw); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporary.Name(), name)
 }
 
 // fingerprint hashes the head of the file, over bytes the bastion has already

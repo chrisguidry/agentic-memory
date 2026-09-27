@@ -31,12 +31,16 @@ type shipment struct {
 
 // service answers `POST /v1/transcripts` and keeps what it was sent. It
 // refuses while `refusing` is set, which is how a service that is down looks
-// from the bastion.
+// from the bastion. `attempts` counts every request, refused or not, and the
+// request numbered `refuseAttempt` is refused once, which is how a service
+// that fails in the middle of a file looks.
 type service struct {
 	*httptest.Server
-	mu        sync.Mutex
-	shipments []shipment
-	refusing  bool
+	mu            sync.Mutex
+	shipments     []shipment
+	refusing      bool
+	attempts      int
+	refuseAttempt int
 }
 
 func newService(t *testing.T) *service {
@@ -54,7 +58,8 @@ func newService(t *testing.T) *service {
 		}
 		found.mu.Lock()
 		defer found.mu.Unlock()
-		if found.refusing {
+		found.attempts++
+		if found.refusing || found.attempts == found.refuseAttempt {
 			http.Error(w, "away", http.StatusServiceUnavailable)
 			return
 		}
@@ -69,6 +74,18 @@ func (s *service) refuse(refusing bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refusing = refusing
+}
+
+func (s *service) refuseOnce(attempt int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refuseAttempt = attempt
+}
+
+func (s *service) tried() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attempts
 }
 
 func (s *service) sent() []shipment {

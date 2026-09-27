@@ -1,5 +1,6 @@
 """Configuration the service reads from its environment."""
 
+from datetime import timedelta
 from functools import lru_cache
 
 from pydantic import Field
@@ -74,6 +75,24 @@ class Settings(BaseSettings):
     # the band are read.
     merge_upper: float = 0.95
     merge_lower: float = 0.80
+
+    # How often the sweep looks for work a failed model call left undone, and
+    # how far back it looks. The interval is short because the query costs
+    # nothing when there is nothing to find. The lookback is a month for the
+    # same reason: the ledger holds about 1,500 rows in total, so scanning a
+    # month of it costs about as little as scanning an hour, and a month
+    # outlives the outage that motivated this and however long it takes anyone
+    # to notice one.
+    sweep_interval: timedelta = timedelta(minutes=5)
+    sweep_lookback: timedelta = timedelta(days=30)
+
+    # How many times a classify or synthesize call can fail, within the
+    # lookback, before the sweep stops offering the entry back. A task's own
+    # retries already spend 4 attempts over about a minute; an entry that has
+    # failed 12 times, three times that budget, is failing for a reason a
+    # retry does not fix, and sweeping it every few minutes for a month would
+    # just be that same retry budget spent forever.
+    sweep_attempts: int = 12
 
 
 @lru_cache

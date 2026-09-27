@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chrisguidry/agentic-memory/host/repository"
 )
@@ -85,6 +86,9 @@ type Shipper struct {
 	// Repositories reads what git says about a working directory. A zero
 	// Shipper sends no repository.
 	Repositories *repository.Reader
+	// Now reads the clock that every wait is set from. A zero Shipper reads the
+	// system clock. A test names its own, so minutes of backoff take no time.
+	Now func() time.Time
 
 	files   sync.Map // path -> *sync.Mutex
 	pending sync.Map // path -> *attempt
@@ -121,15 +125,16 @@ func (s *Shipper) ship(ctx context.Context, request Request) ([]byte, error) {
 		state = readOffset(stateFile)
 	}
 
+	shipped := state.Offset > 0
 	file, err := s.open(request.Path)
 	if err != nil {
-		return nil, err
+		return nil, unreadable{err: err, shipped: shipped}
 	}
 	defer file.Close()
 
 	chunk, state, err := s.unread(file, state, name)
 	if err != nil {
-		return nil, err
+		return nil, unreadable{err: err, shipped: shipped}
 	}
 	if len(chunk) == 0 {
 		return json.Marshal(Counts{})
@@ -182,18 +187,21 @@ func (s *Shipper) ship(ctx context.Context, request Request) ([]byte, error) {
 		}
 		counted.add(found)
 		before += entriesIn(batch)
-	}
 
-	if tracked {
-		state.Path = request.Path
-		state.Offset += int64(len(chunk))
-		state.Entries = before
-		state.Cwd, state.Version = cwd, version
-		if state.Head, err = fingerprint(file, state.Offset); err != nil {
-			return nil, err
-		}
-		if err := writeOffset(stateFile, state); err != nil {
-			return nil, err
+		// The offset is saved after every batch the service takes, so a file
+		// that fails partway resumes after the last batch taken and sends no
+		// line of it again.
+		if tracked {
+			state.Path = request.Path
+			state.Offset += bytesIn(batch)
+			state.Entries = before
+			state.Cwd, state.Version = cwd, version
+			if state.Head, err = fingerprint(file, state.Offset); err != nil {
+				return nil, err
+			}
+			if err := writeOffset(stateFile, state); err != nil {
+				return nil, err
+			}
 		}
 	}
 	s.logf("%s: shipped %d lines from byte %d", name, len(lines), from)
@@ -273,7 +281,20 @@ func (s *Shipper) open(path string) (io.ReadSeekCloser, error) {
 	if s.Open != nil {
 		return s.Open(path)
 	}
-	return os.Open(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, fmt.Errorf("%s: %w", path, errNotAFile)
+	}
+	return file, nil
 }
 
 func (s *Shipper) scopeOf(cwd string) (string, string) {
@@ -294,6 +315,16 @@ func (s *Shipper) logf(format string, arguments ...any) {
 func split(chunk []byte) []string {
 	lines := strings.Split(string(chunk), "\n")
 	return lines[:len(lines)-1]
+}
+
+// bytesIn is how many bytes of the file a batch covers: each line and the
+// newline that split removed from it.
+func bytesIn(lines []string) int64 {
+	var found int64
+	for _, line := range lines {
+		found += int64(len(line)) + 1
+	}
+	return found
 }
 
 // firstValue is the value of key on the first line that carries it.

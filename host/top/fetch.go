@@ -109,7 +109,8 @@ func (c *Client) Memories(ctx context.Context, scope string, limit int, order st
 		query.Set("scope_key", scope)
 	}
 	var found []Memory
-	return found, c.get(ctx, "/memories", query, &found)
+	err := c.get(ctx, "/memories", query, &found)
+	return found, err
 }
 
 // Classifications returns the messages the classifier read most recently,
@@ -117,13 +118,27 @@ func (c *Client) Memories(ctx context.Context, scope string, limit int, order st
 func (c *Client) Classifications(ctx context.Context, limit int) ([]Reading, error) {
 	query := url.Values{"above": {"0.0"}, "limit": {strconv.Itoa(limit)}}
 	var found []Reading
-	return found, c.get(ctx, "/classifications", query, &found)
+	err := c.get(ctx, "/classifications", query, &found)
+	return found, err
+}
+
+// Behind returns how many transcripts the bastion has not shipped yet. The
+// bastion answers this itself, and the service is not asked.
+func (c *Client) Behind(ctx context.Context) (int, error) {
+	var found struct {
+		Behind int `json:"behind"`
+	}
+	err := c.get(ctx, "/transcripts/behind", nil, &found)
+	return found.Behind, err
 }
 
 func (c *Client) get(ctx context.Context, path string, query url.Values, into any) error {
 	// The host is a name the unix dialer never reads, and every request goes
 	// to the one socket the client was made with.
-	address := "http://bastion" + path + "?" + query.Encode()
+	address := "http://bastion" + path
+	if len(query) > 0 {
+		address += "?" + query.Encode()
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return err

@@ -166,6 +166,27 @@ func visible(frame string) string {
 	return strings.ReplaceAll(frame, "\x1b", "\\x1b")
 }
 
+func TestTheStatusLineSaysHowManyTranscriptsAreBehind(t *testing.T) {
+	cases := []struct {
+		name   string
+		behind int
+		want   string
+	}{
+		{"none behind says nothing", 0, "1 just read · polling"},
+		{"one behind", 1, "1 just read · 1 transcript behind · polling"},
+		{"several behind", 3, "1 just read · 3 transcripts behind · polling"},
+	}
+	for _, drawn := range cases {
+		t.Run(drawn.name, func(t *testing.T) {
+			asked := options{limit: 1, written: 1, read: 1, socket: "/run/agentic-memory.sock"}
+			got := frame(asked, state{behind: drawn.behind}, size{rows: 24, columns: 80}, time.Now())
+			if !strings.Contains(got, drawn.want) {
+				t.Errorf("the status line does not say %q:\n%s", drawn.want, visible(got))
+			}
+		})
+	}
+}
+
 func TestAFrameThatCannotReachTheBastionSaysSo(t *testing.T) {
 	drawn := state{problem: "cannot reach the bastion at /run/agentic-memory.sock: no such file"}
 	got := frame(options{limit: 10, written: 10, read: 10}, drawn, size{rows: 24, columns: 80}, time.Now())

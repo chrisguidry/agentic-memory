@@ -13,13 +13,18 @@ from .classify import classify
 from .embed import embed_statements
 from .merge import merge_statements
 from .settings import get_settings
+from .sweep import sweep_failures
 from .synthesize import synthesize
 
 log = logging.getLogger("agentic_memory.worker")
 
 # Every task the worker can run. A docket holds a name rather than a
 # reference, so a task that is not here is one the worker cannot run.
-TASKS = (classify, synthesize, embed_statements, merge_statements)
+#
+# sweep_failures is Perpetual and automatic: registering it here is what
+# schedules it, at startup and again if its chain is ever lost, with no call
+# to docket.add of its own.
+TASKS = (classify, synthesize, embed_statements, merge_statements, sweep_failures)
 
 
 async def serve() -> None:

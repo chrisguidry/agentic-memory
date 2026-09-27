@@ -1,5 +1,7 @@
 # 09, The retries
 
+Closed 2026-09-27.
+
 ## The problem
 
 Two failures lose work today, one on each side of the network.
@@ -72,3 +74,37 @@ sending it again gets the same refusal.
   and one that the provider refused is not.
 - On its first run against the homelab store, the sweep reads the prompts
   the 2026-09-23 outage left unread.
+
+## What the drill measured
+
+The bastion ran from a separate build against a stub service, with its own
+state directory and socket. Two lines shipped. While the stub answered 503,
+two more failed and were counted behind. A transcript that did not exist yet
+was held for its grace period, and a directory named as a transcript was
+dropped at once with one journal line. `top` showed two transcripts behind,
+and both state records had mode 0600.
+
+After a SIGTERM and a restart, the bastion logged that it resumed two files
+behind. When the stub answered 200, it shipped the two lines from their
+saved offset, and the stub had received four lines, all distinct. At two
+minutes the missing transcript was dropped, and the count behind was zero.
+
+The grace period is two minutes. Claude Code writes the first prompt a
+moment after the event that names the transcript, so two minutes covers a
+slow disk with room. A file the bastion shipped from before and that is now
+missing is gone at once, with no grace period. So is a path that is not a
+regular file, or one that fails with a permission error, `ENOTDIR`,
+`ELOOP`, or `ENAMETOOLONG`. Any other local error backs off like a service
+failure, because waiting can fix it.
+
+The offset is saved after each batch the service accepts. A file of 250
+lines whose second batch was refused once resumed after the first batch, and
+the service received each line once.
+
+The sweep looks back 30 days, because an outage is often noticed days after
+it happens and the ledger is about 1,500 rows. An entry stops being a
+candidate at 12 error calls, which is three sweeps of a task's four
+attempts, so an entry that fails for good is not retried for a month.
+
+The sweep's first run against the homelab store, and whether it reads the
+prompts the 2026-09-23 outage left unread, is measured at deploy.

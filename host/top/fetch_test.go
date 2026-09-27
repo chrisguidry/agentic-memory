@@ -119,6 +119,23 @@ func TestAReadingWithNoAnswersNamesNothing(t *testing.T) {
 	}
 }
 
+func TestTheBastionSaysHowManyTranscriptsAreBehind(t *testing.T) {
+	client, asked := bastion(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Write([]byte(`{"behind": 3}`))
+	}))
+
+	found, err := client.Behind(context.Background())
+	if err != nil {
+		t.Fatalf("Behind: %v", err)
+	}
+	if found != 3 {
+		t.Errorf("the socket gave %d files behind, want 3", found)
+	}
+	if asked.first() != "/transcripts/behind" {
+		t.Errorf("the client asked for %q, want %q", asked.first(), "/transcripts/behind")
+	}
+}
+
 func TestASocketNobodyServesIsAnError(t *testing.T) {
 	client := Dial(filepath.Join(t.TempDir(), "absent.sock"))
 	if _, err := client.Memories(context.Background(), "", 10, "rank"); err == nil {

@@ -36,6 +36,7 @@ func Run(ctx context.Context, config Config, logger *log.Logger) error {
 	if err != nil {
 		return err
 	}
+	shipper.Resume()
 	go shipper.Retry(ctx)
 
 	server := &http.Server{
@@ -100,6 +101,7 @@ func Routes(config Config, logger *log.Logger) (http.Handler, *transcripts.Shipp
 	routes := http.NewServeMux()
 	routes.Handle("POST /claude-code/hooks", hooks)
 	routes.Handle("POST /transcripts/ship", ship(shipper, config.Machine, logger))
+	routes.Handle("GET /transcripts/behind", behind(shipper))
 	routes.Handle("/", onward)
 	return routes, shipper, nil
 }
@@ -128,5 +130,14 @@ func ship(shipper *transcripts.Shipper, machine string, logger *log.Logger) http
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(answer)
+	})
+}
+
+// behind answers `GET /transcripts/behind` with how many files the service has
+// not taken yet. `top` shows the count.
+func behind(shipper *transcripts.Shipper) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{"behind": shipper.Behind()})
 	})
 }

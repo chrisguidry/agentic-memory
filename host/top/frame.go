@@ -225,11 +225,14 @@ type state struct {
 	memories []Memory
 	written  []Memory
 	readings []Reading
+	behind   int
 	problem  string
 }
 
-// status says what is drawn, and what the terminal had no room for.
-func status(asked options, drew [3]int) string {
+// status says what is drawn, what the terminal had no room for, and how many
+// transcripts the bastion has not shipped. A count of zero is left off, so the
+// line changes only when something is behind.
+func status(asked options, drew [3]int, behind int) string {
 	named := []struct {
 		name         string
 		asked, drawn int
@@ -245,6 +248,12 @@ func status(asked options, drew [3]int) string {
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%d of %d %s", panel.drawn, panel.asked, panel.name))
+	}
+	switch {
+	case behind == 1:
+		parts = append(parts, "1 transcript behind")
+	case behind > 1:
+		parts = append(parts, fmt.Sprintf("%d transcripts behind", behind))
 	}
 	return "  " + strings.Join(parts, " · ") + " · polling " + asked.socket
 }
@@ -277,7 +286,7 @@ func frame(asked options, now state, size size, clock time.Time) string {
 	rows = append(rows, memoriesPanel(first(now.memories, limit), asked.scope, size.columns, clock).draw(size.columns)...)
 	rows = append(rows, writtenPanel(first(now.written, written), clock).draw(size.columns)...)
 	rows = append(rows, readingsPanel(first(now.readings, read), clock).draw(size.columns)...)
-	rows = append(rows, line{{status(asked, [3]int{limit, written, read}), dim}}.render())
+	rows = append(rows, line{{status(asked, [3]int{limit, written, read}, now.behind), dim}}.render())
 	return strings.Join(cut(rows, size.rows), "\n")
 }
 

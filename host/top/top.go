@@ -160,6 +160,10 @@ func poll(asked options, client *Client, now *state) {
 		return
 	}
 	now.memories, now.written, now.readings, now.problem = memories, written, readings, ""
+
+	// A bastion with no `/transcripts/behind` route proxies the request to the
+	// service, which refuses it. That costs the count and not the panels.
+	now.behind, _ = client.Behind(ctx)
 }
 
 func unreachable(path string, err error) string {
