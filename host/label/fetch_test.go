@@ -96,6 +96,40 @@ func TestNextWithNoAfterLeavesItOffTheQuery(t *testing.T) {
 	}
 }
 
+func TestContextAsksForASessionAnEntryAndAPage(t *testing.T) {
+	client, asked := bastion(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Write([]byte(`{"exchange":{"entry_id":"e0","occurred_at":"2026-03-04T09:00:00+00:00",` +
+			`"prompt":"an earlier question","replies":["an earlier answer"]}}`))
+	}))
+
+	found, err := client.Context(context.Background(), "s1", "e1", 2)
+	if err != nil {
+		t.Fatalf("Context: %v", err)
+	}
+	if found == nil || found.Prompt != "an earlier question" || len(found.Replies) != 1 {
+		t.Errorf("the socket gave %+v", found)
+	}
+	want := "/labels/context?entry_id=e1&page=2&session_id=s1"
+	if got := asked.first().URL.RequestURI(); got != want {
+		t.Errorf("the client asked for %q, want %q", got, want)
+	}
+}
+
+func TestContextWithNoExchangeLeftGivesNil(t *testing.T) {
+	client, _ := bastion(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Write([]byte(`{"exchange":null}`))
+	}))
+
+	found, err := client.Context(context.Background(), "s1", "e1", 9)
+	if err != nil {
+		t.Fatalf("Context: %v", err)
+	}
+	if found != nil {
+		t.Errorf("an exchange of null came back as %+v", found)
+	}
+}
+
 func TestJudgeSendsThePairAndTheLabel(t *testing.T) {
 	client, asked := bastion(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Write([]byte(`{"labelled":"good"}`))

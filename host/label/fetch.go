@@ -24,6 +24,23 @@ type Pair struct {
 	Kind      string `json:"kind"`
 	ScopeKey  string `json:"scope_key"`
 	SaidAt    string `json:"said_at"`
+
+	// Where and when the prompt was said, and what the agent had just told
+	// the person, so a prompt like "yeah do that" reads as an answer to
+	// something instead of nothing on its own.
+	OccurredAt       string `json:"occurred_at"`
+	WorkingDirectory string `json:"working_directory"`
+	SessionScopeKey  string `json:"session_scope_key"`
+	LastReply        string `json:"last_reply"`
+}
+
+// Exchange is one earlier turn in the pair's session: a human prompt and the
+// agent's replies to it, as `/labels/context` answers it.
+type Exchange struct {
+	EntryID    string   `json:"entry_id"`
+	OccurredAt string   `json:"occurred_at"`
+	Prompt     string   `json:"prompt"`
+	Replies    []string `json:"replies"`
 }
 
 // Next is what `/labels/next` answers: the pair to show, and how far the
@@ -70,6 +87,28 @@ func (c *Client) Next(ctx context.Context, sample string, after int) (Next, erro
 	}
 	var found Next
 	return found, c.get(ctx, "/labels/next", query, &found)
+}
+
+// contextAnswer is what `/labels/context` answers: a nil Exchange means
+// paging has run past the start of the session.
+type contextAnswer struct {
+	Exchange *Exchange `json:"exchange"`
+}
+
+// Context asks for one earlier exchange in the pair's session: page 0 is the
+// one right before the prompt at entryID, page 1 the one before that, and so
+// on. A nil Exchange means there is nothing older left to show.
+func (c *Client) Context(ctx context.Context, sessionID, entryID string, page int) (*Exchange, error) {
+	query := url.Values{
+		"session_id": {sessionID},
+		"entry_id":   {entryID},
+		"page":       {strconv.Itoa(page)},
+	}
+	var found contextAnswer
+	if err := c.get(ctx, "/labels/context", query, &found); err != nil {
+		return nil, err
+	}
+	return found.Exchange, nil
 }
 
 // Judge sends a person's judgment of one pair. A second judgment of the same

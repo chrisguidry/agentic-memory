@@ -24,16 +24,23 @@ ENV UV_COMPILE_BYTECODE=1 \
     PYTHONPATH=/app/src \
     PATH=/app/.venv/bin:$PATH
 
-# The dependencies first, and the project itself never. The source is mounted
-# in dev, so an installed copy would only shadow it. `db.py` reads the schema
-# two directories above the package, which is /app this way, and a packaged
-# install would move it under site-packages and break that.
+# The dependencies first, and the project itself not yet. The source is
+# mounted in dev, so a project install here would bake a copy that only shadows
+# it. `db.py` reads the schema two directories above the package, which is
+# /app this way, and a packaged install would move it under site-packages and
+# break that.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
 FROM base AS dev
 
 COPY src ./src
+
+# The project installed now, on top of the cached dependencies, so its
+# `[project.scripts]` land in .venv/bin and run by name. Editable, so the
+# volume compose mounts over ./src is what a script and uvicorn's reloader
+# both read, not a copy this layer baked.
+RUN uv sync --frozen --no-dev
 
 EXPOSE 4318
 
@@ -47,6 +54,11 @@ ENV AGENTIC_MEMORY_EMBED_CACHE=/app/models
 
 COPY src ./src
 COPY schema.sql ./schema.sql
+
+# The project installed here too, so its scripts land in .venv/bin. Nothing
+# mounts over /app/src in prod, so this is the only copy either an editable
+# link or uvicorn ever reads.
+RUN uv sync --frozen --no-dev
 
 RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='$EMBED_MODEL', cache_dir='/app/models')"
 

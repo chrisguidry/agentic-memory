@@ -57,7 +57,7 @@ func Run(args []string, out io.Writer) int {
 const usage = `agentic-memory label walks a sample of prompts and the statements they were
 handed, and takes a person's judgment of each pair.
 
-  g good   n noise   w wrong   s skip   q quit
+  g good   n noise   w wrong   s skip   c context   q quit
 
 `
 
@@ -91,9 +91,10 @@ func readKey(in io.Reader) (byte, error) {
 // judgment is what one keypress asks the loop to do.
 type judgment struct {
 	// label is "good", "noise", or "wrong" when the key judged the pair.
-	label string
-	skip  bool
-	quit  bool
+	label   string
+	skip    bool
+	context bool
+	quit    bool
 }
 
 // interpret reads one key the person pressed. The second return is false for
@@ -108,6 +109,8 @@ func interpret(key byte) (judgment, bool) {
 		return judgment{label: "wrong"}, true
 	case 's':
 		return judgment{skip: true}, true
+	case 'c':
+		return judgment{context: true}, true
 	case 'q', 3: // q, or the byte a terminal sends for Ctrl-C
 		return judgment{quit: true}, true
 	default:
@@ -120,6 +123,7 @@ func interpret(key byte) (judgment, bool) {
 type api interface {
 	Next(ctx context.Context, sample string, after int) (Next, error)
 	Judge(ctx context.Context, pair Pair, label string) error
+	Context(ctx context.Context, sessionID, entryID string, page int) (*Exchange, error)
 }
 
 // loop draws a pair, waits for one meaningful key, and acts on it, until the
@@ -150,6 +154,12 @@ func loop(asked options, client api, in io.Reader, out io.Writer) int {
 			// Nothing to act on yet: any other key just asks again.
 			continue
 		}
+		if decided.context {
+			if quit := browseContext(ctx, asked, client, *found.Pair, in, out); quit {
+				return 0
+			}
+			continue
+		}
 
 		after = found.Pair.ID
 		if decided.skip {
@@ -162,8 +172,41 @@ func loop(asked options, client api, in io.Reader, out io.Writer) int {
 	}
 }
 
+// browseContext shows the pair's session one exchange earlier than the
+// prompt, and one exchange earlier again for every `c` pressed after that.
+// Any other key returns to the pair, and a quit here quits the program the
+// same as it does from the pair.
+func browseContext(ctx context.Context, asked options, client api, pair Pair, in io.Reader, out io.Writer) bool {
+	page := 0
+	for {
+		exchange, err := client.Context(ctx, pair.SessionID, pair.EntryID, page)
+		problem := ""
+		if err != nil {
+			problem = unreachable(asked.socket, err)
+		}
+		drawContext(out, exchange, page, problem, asked.socket)
+
+		key, keyErr := readKey(in)
+		if keyErr != nil {
+			return true
+		}
+		if key == 'q' || key == 3 {
+			return true
+		}
+		if key == 'c' && err == nil && exchange != nil {
+			page++
+			continue
+		}
+		return false
+	}
+}
+
 func draw(out io.Writer, sample string, found Next, problem, sock string) {
 	fmt.Fprint(out, terminal.HomeClear+frame(sample, found, problem, terminal.Detect(out), sock, time.Now().UTC()))
+}
+
+func drawContext(out io.Writer, exchange *Exchange, page int, problem, sock string) {
+	fmt.Fprint(out, terminal.HomeClear+contextFrame(exchange, page, problem, terminal.Detect(out), sock))
 }
 
 func unreachable(path string, err error) string {

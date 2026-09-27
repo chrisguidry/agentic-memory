@@ -12,7 +12,11 @@ func pair(prompt, statement, kind, scope string) *Pair {
 	return &Pair{
 		ID: 9, SessionID: "s1", EntryID: "e1", MemoryID: 42,
 		Prompt: prompt, Statement: statement, Kind: kind, ScopeKey: scope,
-		SaidAt: "2026-03-04T10:00:00+00:00",
+		SaidAt:           "2026-03-04T10:00:00+00:00",
+		OccurredAt:       "2026-03-04T10:00:00+00:00",
+		WorkingDirectory: "/repo/widget",
+		SessionScopeKey:  "example.test/acme/widget",
+		LastReply:        "here is what I found",
 	}
 }
 
@@ -27,16 +31,38 @@ func TestAFrameShowsThePromptAndTheStatement(t *testing.T) {
 		"we use uv here",
 		"procedural",
 		"example.test/acme/widget",
+		"/repo/widget",
+		"here is what I found",
 		"2h",
 		"3 of 10",
 		"g good",
 		"n noise",
 		"w wrong",
 		"s skip",
+		"c context",
 		"q quit",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the frame did not show %q:\n%s", want, visible(got))
+		}
+	}
+}
+
+func TestAFrameWithNoLastReplySaysSo(t *testing.T) {
+	found := Next{Done: 0, Total: 1, Pair: pair("hello", "a rule", "semantic", "")}
+	found.Pair.LastReply = ""
+	got := frame("week-1", found, "", terminal.Size{Rows: 24, Columns: 80}, "sock", time.Now())
+	if !strings.Contains(got, "nothing said before this") {
+		t.Errorf("a pair with no earlier reply did not say so:\n%s", visible(got))
+	}
+}
+
+func TestAFrameWithNoSessionScopeOrDirectorySaysSo(t *testing.T) {
+	found := Next{Done: 0, Total: 1, Pair: &Pair{Prompt: "hi", Statement: "a rule"}}
+	got := frame("week-1", found, "", terminal.Size{Rows: 24, Columns: 80}, "sock", time.Now())
+	for _, want := range []string{"everywhere", "(no working directory)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a pair with no session scope or directory did not show %q:\n%s", want, visible(got))
 		}
 	}
 }
@@ -89,6 +115,33 @@ func TestALongPromptStaysWithinTheTerminalHeight(t *testing.T) {
 	got := frame("week-1", found, "", terminal.Size{Rows: 24, Columns: 80}, "sock", time.Now())
 	if rows := strings.Count(got, "\n") + 1; rows > 24 {
 		t.Errorf("a long pair drew %d rows into a terminal of 24", rows)
+	}
+}
+
+func TestAContextFrameShowsTheExchange(t *testing.T) {
+	exchange := &Exchange{
+		EntryID: "e0", OccurredAt: "2026-03-04T09:00:00+00:00",
+		Prompt: "an earlier question", Replies: []string{"an earlier answer"},
+	}
+	got := contextFrame(exchange, 0, "", terminal.Size{Rows: 24, Columns: 80}, "sock")
+	for _, want := range []string{"an earlier question", "an earlier answer", "page 0", "c older"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the context frame did not show %q:\n%s", want, visible(got))
+		}
+	}
+}
+
+func TestAContextFrameWithNoExchangeSaysSo(t *testing.T) {
+	got := contextFrame(nil, 2, "", terminal.Size{Rows: 24, Columns: 80}, "sock")
+	if !strings.Contains(got, "nothing earlier") {
+		t.Errorf("a page past the start did not say so:\n%s", visible(got))
+	}
+}
+
+func TestAContextFrameThatCannotReachTheBastionSaysSo(t *testing.T) {
+	got := contextFrame(nil, 0, "cannot reach the bastion at sock: refused", terminal.Size{Rows: 24, Columns: 80}, "sock")
+	if !strings.Contains(got, "cannot reach the bastion") {
+		t.Errorf("the context frame did not say the bastion is unreachable:\n%s", visible(got))
 	}
 }
 

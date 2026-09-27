@@ -52,15 +52,19 @@ top down until it fits the terminal. `--every` is the seconds between polls.
 `label` walks a sample built on the service with `agentic-memory-sample` and
 takes a person's judgment of each pair through `GET /labels/next` and
 `POST /labels`, both proxied by the bastion like any other route. It shows
-the prompt, the statement, its kind, its scope, and how long ago it was said,
-one pair to a screen. `--sample` names the sample to walk:
+where and when the prompt was said, the agent's last reply before it, the
+prompt, and the statement with its kind, its scope, and how long ago it was
+said, one pair to a screen. `--sample` names the sample to walk:
 
     agentic-memory label --sample week-1
 
 `g`, `n`, and `w` judge the pair good, noise, or wrong and move to the next
 one. `s` skips it without judging, and comes back to it once every later pair
-in the sample has been judged. `q` quits at any time; a judgment already sent
-stands, because a label outlives the sample that asked for it.
+in the sample has been judged. `c` opens the session's earlier exchanges
+through `GET /labels/context`, one at a time and newest first; `c` again
+reaches further back, and any other key returns to the pair. `q` quits at any
+time, from the pair or from context; a judgment already sent stands, because
+a label outlives the sample that asked for it.
 
 `claude` reads the payload on stdin, sends it to the socket, writes the answer
 to stdout, and exits zero whatever happened. It has a hard deadline of two
