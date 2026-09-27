@@ -257,7 +257,7 @@ class TestAbsent:
         found = await match(
             store,
             FixedEmbedder(BASE),
-            session_id="turn-1",
+            seen=(),
             scope_key=SCOPE,
             prompt="commits",
             limit=5,

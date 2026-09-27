@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from . import db, embed, ingest, ledger, recall
+from . import db, embed, ingest, ledger, metrics, recall
 from . import memories as statements
 from . import synthesize as writer
 from .classify import (
@@ -29,6 +29,7 @@ from .classify import (
     worth_reading,
 )
 from .db import store_pool
+from .labels import router as labels_router
 from .merge import merge_statements
 from .otlp import walk
 from .settings import get_settings
@@ -58,6 +59,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="agentic-memory", lifespan=lifespan)
+app.include_router(labels_router)
 
 
 async def schedule(docket: Docket, prompts: list[tuple[str, str]], run: str = "live") -> int:
@@ -90,21 +92,15 @@ async def health(request: Request) -> dict:
 
 
 @app.get("/metrics")
-async def metrics(request: Request) -> PlainTextResponse:
+async def scrape(request: Request) -> PlainTextResponse:
     """The numbers Prometheus scrapes, in its text format.
 
-    A scrape reads the store, so the numbers are current rather than counted in
-    the process, and a PodMonitor over this endpoint is the whole metrics side.
+    The counts of what the store holds are read at each scrape, and the turn
+    path's latency and outcomes are counted in the process. A PodMonitor over
+    this endpoint is the whole metrics side.
     """
     found = await db.metrics(request.app.state.pool)
-    lines: list[str] = []
-    for name, value in found["gauges"].items():
-        lines.append(f"# TYPE agentic_memory_{name} gauge")
-        lines.append(f"agentic_memory_{name} {value}")
-    lines.append("# TYPE agentic_memory_model_calls counter")
-    for task, calls in found["calls"]:
-        lines.append(f'agentic_memory_model_calls{{task="{task}"}} {calls}')
-    return PlainTextResponse("\n".join(lines) + "\n")
+    return PlainTextResponse(metrics.render(found["gauges"], found["calls"]))
 
 
 @app.post("/v1/logs")
@@ -258,6 +254,10 @@ class Ask(BaseModel):
     # about it. Empty means the session's first ask is the only form served.
     prompt: str = ""
     limit: int = Field(recall.LIMIT, ge=1, le=recall.LIMIT)
+    # How many recalls the client stopped waiting for since its last ask. The
+    # client is on a machine Prometheus does not scrape, so it reports its
+    # misses here and the service counts them.
+    missed: int = Field(0, ge=0)
 
 
 @app.post("/recall")
@@ -266,18 +266,25 @@ async def recall_for_turn(request: Request, ask: Ask) -> dict:
 
     A session's first ask gets the top of its scope's list. Every ask after it
     gets the statements that are about the prompt, or nothing. Both leave out
-    what this session was already handed, and both are recorded, so the outcome
-    flow has something to join to.
+    what this session was already handed, and both are recorded while the
+    client waits, so the outcome flow has something to join to.
     """
-    found = await recall.turn(
-        request.app.state.pool,
-        request.app.state.embedder,
-        get_settings(),
-        session_id=ask.session_id,
-        harness=ask.harness,
-        scope_key=ask.scope_key,
-        prompt=ask.prompt,
-    )
+    metrics.MISSES.inc(ask.missed)
+
+    async def waiting() -> bool:
+        return not await request.is_disconnected()
+
+    with metrics.phase("request"):
+        handout = await recall.turn(
+            request.app.state.pool,
+            request.app.state.embedder,
+            get_settings(),
+            session_id=ask.session_id,
+            harness=ask.harness,
+            scope_key=ask.scope_key,
+            prompt=ask.prompt,
+            waiting=waiting,
+        )
     return {
         "statements": [
             {
@@ -289,7 +296,7 @@ async def recall_for_turn(request: Request, ask: Ask) -> dict:
                 "actor": row["actor"],
                 "actor_depth": row["actor_depth"],
             }
-            for row in found
+            for row in handout.statements
         ]
     }
 

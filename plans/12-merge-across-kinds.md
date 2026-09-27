@@ -56,6 +56,15 @@ Nothing is deleted. `otel_exports` and `logs` are not touched. An old
 statement is still in the table, with the pointer or the reason that ended
 it, so the step is reversible by clearing those columns.
 
+### Reading the replay after the re-read
+
+Plan 08's replay reads each prompt against the statements that were live
+at the moment the prompt was said. The re-read writes its statements after
+the week it replays, so under that reading the replay hands out none of
+them. The replay gains a mode that reads the store as it is now, with each
+statement aged as though it were written at the moment of its message, and
+plans 11 and 12 compare before and after in that mode.
+
 ## The contracts
 
 - The merge's second question has its own threshold, which is a setting.

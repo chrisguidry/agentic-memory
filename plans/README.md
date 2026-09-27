@@ -49,10 +49,6 @@ turn the record into memory. A worker reads a window of a session, asks a
 cheap model which kinds of memory are in it, and writes down the
 probabilities. No memory is written.
 
-* [08, The replay](08-the-replay.md). Replays a week of real prompts
-  through the turn path, labels what each prompt was handed, and measures
-  how long each part of a recall takes. Every plan after it is measured
-  with it.
 * [10, The opening and the filters](10-the-opening-and-the-filters.md).
   A session's first prompt is matched like every other, statements with no
   scope arrive only through the match, and two answers written off the turn
@@ -64,7 +60,7 @@ probabilities. No memory is written.
   statements of every kind and retires one that a newer one changes, then
   the corpus is read again under the questions from 10 and 11.
 
-08 comes first because 10, 11, and 12 are measured with it. 12 runs after 10 and 11, so the corpus is read
+10, 11, and 12 are measured with the replay and the labels from 08. 12 runs after 10 and 11, so the corpus is read
 again once.
 
 Nothing after 12 is written. The design says where the work can go, and a
@@ -78,6 +74,7 @@ step six months out would be a guess with a number on it.
 * [05, The merge](completed/05-the-merge.md). Closed 2026-09-21.
 * [06, The model calls](completed/06-the-model-calls.md). Closed 2026-09-21.
 * [07, The bastion](completed/07-the-bastion.md). Closed 2026-09-22.
+* [08, The replay](completed/08-the-replay.md). Closed 2026-09-27.
 * [09, The retries](completed/09-the-retries.md). Closed 2026-09-27.
 
 01 and 02 describe the record and the classifier, and both are built.

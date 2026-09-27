@@ -30,10 +30,10 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/chrisguidry/agentic-memory/host/scope"
 	"github.com/chrisguidry/agentic-memory/host/socket"
+	"github.com/chrisguidry/agentic-memory/host/terminal"
 )
 
 // options is what the command line asked for.
@@ -45,19 +45,6 @@ type options struct {
 	every   float64
 	socket  string
 }
-
-// size is the terminal the frame is drawn into.
-type size struct {
-	rows    int
-	columns int
-}
-
-// fallbackRows and fallbackColumns are the terminal a program that is not
-// attached to one gets.
-const (
-	fallbackRows    = 24
-	fallbackColumns = 80
-)
 
 // Run draws the three panels until the person stops it, and returns the exit
 // status.
@@ -115,8 +102,8 @@ func watch(asked options, client *Client, out io.Writer) int {
 
 	// The caret is hidden for the whole run and shown again on the way out, so
 	// an interrupted watch does not leave the terminal without one.
-	fmt.Fprint(out, hideCaret)
-	defer fmt.Fprint(out, showCaret+"\n")
+	fmt.Fprint(out, terminal.HideCaret)
+	defer fmt.Fprint(out, terminal.ShowCaret+"\n")
 
 	every := time.Duration(asked.every * float64(time.Second))
 	if every < time.Millisecond {
@@ -128,7 +115,7 @@ func watch(asked options, client *Client, out io.Writer) int {
 	var now state
 	for {
 		poll(asked, client, &now)
-		fmt.Fprint(out, homeClear+frame(asked, now, terminal(out), time.Now().UTC()))
+		fmt.Fprint(out, terminal.HomeClear+frame(asked, now, terminal.Detect(out), time.Now().UTC()))
 		select {
 		case <-stop:
 			return 0
@@ -168,24 +155,4 @@ func poll(asked options, client *Client, now *state) {
 
 func unreachable(path string, err error) string {
 	return fmt.Sprintf("cannot reach the bastion at %s: %v", path, err)
-}
-
-// terminal returns the size of the terminal a writer is attached to. A writer
-// that is not a terminal, such as a file, gets the fallback.
-func terminal(out io.Writer) size {
-	file, ok := out.(*os.File)
-	if !ok {
-		return size{rows: fallbackRows, columns: fallbackColumns}
-	}
-	var window struct{ rows, columns, width, height uint16 }
-	_, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		file.Fd(),
-		syscall.TIOCGWINSZ,
-		uintptr(unsafe.Pointer(&window)),
-	)
-	if errno != 0 || window.rows == 0 || window.columns == 0 {
-		return size{rows: fallbackRows, columns: fallbackColumns}
-	}
-	return size{rows: int(window.rows), columns: int(window.columns)}
 }

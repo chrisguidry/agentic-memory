@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.115",
     "fastembed>=0.8",
     "httpx>=0.27",
+    "prometheus-client>=0.21",
     "pydantic-settings>=2.0",
     "pydocket>=0.25",
     "typesafe-sdk>=0.7",
@@ -17,6 +18,8 @@ dependencies = [
 [project.scripts]
 agentic-memory = "agentic_memory.app:main"
 agentic-memory-worker = "agentic_memory.worker:main"
+agentic-memory-replay = "agentic_memory.replay.command:main"
+agentic-memory-sample = "agentic_memory.labels:main"
 
 [dependency-groups]
 dev = [

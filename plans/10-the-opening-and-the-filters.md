@@ -7,8 +7,9 @@ ranked by kind and age, and the prompt is not read. Statements with no
 scope are reachable from every scope, and a preference or a correction has
 the highest weight, so the same few statements with no scope open nearly
 every session, whatever it is about. Over the week after 2026-09-23, first
-prompts took 250 of the 370 statements handed out. The most frequent
-statement with no scope went to 21 sessions, and it concerns one kind of
+prompts took 250 of the 380 statements handed out, and 40 percent of the
+380 had no scope. The most frequent statement with no scope went to 21
+sessions, and it concerns one kind of
 request.
 
 Later prompts are matched, and the match hands out a statement when it
@@ -17,6 +18,11 @@ as "keep going" or "looks good", scores well above the rest against a
 statement of praise, because the two are written in the same register. So
 those replies are handed a statement about some earlier piece of work being
 received well, which helps no one.
+
+The bastion also asks for recall on prompts the classifier skips as
+plumbing: a task notification, a skill's body, or feedback from a Stop hook.
+Each of those is handed statements, and a statement handed to one is marked
+seen and is never handed to that session again.
 
 Plan 04 left the opening list as an open question, and noted that a reply
 like "yes, that one" matches nothing useful on its own.
@@ -87,6 +93,12 @@ in the order the list has now. Only statements with a scope are candidates,
 so the opening carries the standing rules for where the session is, and
 nothing that holds everywhere.
 
+### Prompts that are plumbing
+
+The turn path applies the classifier's plumbing filter before anything else,
+so a prompt the classifier would not read is handed nothing and marks
+nothing seen.
+
 ## The contracts
 
 - `memories` gains a column for the answer to the new question, and the
@@ -109,12 +121,14 @@ nothing that holds everywhere.
 - Every threshold and cutoff is set from a replay under plan 08, over the
   same week, with the labels. The drill records the values and why.
 - The replay shows the share of handed statements with no scope falling
-  from about 60 percent to the share the match earns on its own.
+  from 40 percent to the share the match earns on its own.
 - The replay shows fewer handed pairs labelled noise on short replies, and
   no loss of the pairs labelled good.
 - A prompt whose neighbourhood is mostly empty is handed nothing, and a
   prompt with a subject beside it is matched.
 - A first prompt is matched, and the three from the list all have a scope.
+- A task notification or a skill's body is handed nothing, and marks
+  nothing seen.
 - The recall histograms from plan 08 show the new query's cost, and the
   turn path stays inside the bastion's deadline.
 

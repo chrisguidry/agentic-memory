@@ -101,11 +101,11 @@ async def filed(store: asyncpg.Pool, embedder: Embedder, vectors) -> asyncpg.Poo
     return store
 
 
-async def matched(store, embedder, prompt, session_id="turn-1", limit=5, margin=0.05):
+async def matched(store, embedder, prompt, seen=(), limit=5, margin=0.05):
     found = await match(
         store,
         embedder,
-        session_id=session_id,
+        seen=seen,
         scope_key=SCOPE,
         prompt=prompt,
         limit=limit,
@@ -125,13 +125,8 @@ class TestMatch:
 
     async def test_a_statement_the_session_saw_is_not_handed_again(self, filed, embedder):
         first = await filed.fetchval("SELECT id FROM memories WHERE statement = $1", ABOUT[0])
-        await filed.execute(
-            "INSERT INTO injections (session_id, harness, scope_key, memory_ids)"
-            " VALUES ('turn-1', 'pi', $1, $2)",
-            SCOPE,
-            [first],
-        )
-        assert ABOUT[0] not in await matched(filed, embedder, "how do the tests talk to postgres?")
+        found = await matched(filed, embedder, "how do the tests talk to postgres?", seen={first})
+        assert ABOUT[0] not in found
 
     async def test_the_handout_never_exceeds_its_limit(self, filed, embedder):
         await held(filed, "The test database is copied from a template for each test.")
@@ -193,7 +188,7 @@ class TestTurn:
             prompt=prompt,
             now=NOW,
         )
-        return [row["statement"] for row in found]
+        return [row["statement"] for row in found.statements]
 
     async def test_a_sessions_first_ask_is_handed_the_top_of_the_list(self, filed, embedder):
         found = await self.asked(filed, embedder, "what rhymes with orange?")

@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/chrisguidry/agentic-memory/host/terminal"
 )
 
 // Memory is one statement the service is holding, with the rank the order was
@@ -62,7 +64,7 @@ func (r Reading) probability(kind string) (float64, bool) {
 // best returns the kind the reading answered highest, and that answer.
 func (r Reading) best() (string, float64) {
 	winner, highest := "", 0.0
-	for _, kind := range kinds() {
+	for _, kind := range terminal.Kinds() {
 		answer, given := r.probability(kind)
 		if !given {
 			continue

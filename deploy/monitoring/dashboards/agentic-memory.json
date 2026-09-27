@@ -78,6 +78,82 @@
           "legendFormat": "pending exports"
         }
       ]
+    },
+    {
+      "title": "Turn path",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "panels": []
+    },
+    {
+      "title": "Recall, 90th percentile by phase",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.9, sum by (le, phase) (rate(agentic_memory_recall_seconds_bucket[5m])))",
+          "legendFormat": "{{phase}}"
+        }
+      ]
+    },
+    {
+      "title": "Whole recall",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(agentic_memory_recall_seconds_bucket{phase=\"request\"}[5m])))",
+          "legendFormat": "median"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(agentic_memory_recall_seconds_bucket{phase=\"request\"}[5m])))",
+          "legendFormat": "90th percentile"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(agentic_memory_recall_seconds_bucket{phase=\"request\"}[5m])))",
+          "legendFormat": "99th percentile"
+        }
+      ]
+    },
+    {
+      "title": "Recalls by form and outcome, per 15 minutes",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (form, outcome) (increase(agentic_memory_recalls_total[15m]))",
+          "legendFormat": "{{form}} {{outcome}}"
+        }
+      ]
+    },
+    {
+      "title": "Recalls the client stopped waiting for, per 15 minutes",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(agentic_memory_recall_deadline_misses_total[15m]))",
+          "legendFormat": "missed, as the bastion counted them"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(agentic_memory_recalls_total{outcome=\"gone\"}[15m]))",
+          "legendFormat": "gone before the record, as the service saw them"
+        }
+      ]
     }
   ]
 }

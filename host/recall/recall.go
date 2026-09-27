@@ -6,20 +6,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
+	"sync/atomic"
 )
 
 // Ask is the question the bastion puts to the service. The prompt goes whole.
 // The service matches statements against it and applies its own limit to its
-// length.
+// length. Missed is how many asks since the last one sent ran out of time
+// before the service answered, because the service has no other way to learn
+// of them.
 type Ask struct {
 	SessionID string `json:"session_id"`
 	Harness   string `json:"harness"`
 	ScopeKey  string `json:"scope_key"`
 	Prompt    string `json:"prompt"`
 	Limit     int    `json:"limit"`
+	Missed    int    `json:"missed"`
 }
 
 // Statement is one thing an earlier session said, with where it came from.
@@ -37,12 +43,35 @@ type Client struct {
 	Service       string
 	Authorization string
 	HTTP          *http.Client
+
+	missed atomic.Int64
 }
 
 // Statements returns what the service has to say for this ask. The context
 // carries the deadline, so a service that is slow to connect and one that is
 // slow to answer both end the same way: no memory this time.
+//
+// An ask that runs out of time is counted, and the count goes out with the
+// next ask. The count is taken as delivered once the request is written,
+// because the service counts it on arrival and before it answers. A request
+// that was never written gives its count back for the ask after it.
 func (c *Client) Statements(ctx context.Context, ask Ask) ([]Statement, error) {
+	ask.Missed = int(c.missed.Swap(0))
+	var wrote atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) { wrote.Store(info.Err == nil) },
+	})
+	statements, err := c.ask(ctx, ask)
+	if !wrote.Load() {
+		c.missed.Add(int64(ask.Missed))
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		c.missed.Add(1)
+	}
+	return statements, err
+}
+
+func (c *Client) ask(ctx context.Context, ask Ask) ([]Statement, error) {
 	body, err := json.Marshal(ask)
 	if err != nil {
 		return nil, err

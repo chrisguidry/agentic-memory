@@ -12,6 +12,7 @@ import (
 	"github.com/chrisguidry/agentic-memory/host/backfill"
 	"github.com/chrisguidry/agentic-memory/host/bastion"
 	"github.com/chrisguidry/agentic-memory/host/claudecode"
+	"github.com/chrisguidry/agentic-memory/host/label"
 	"github.com/chrisguidry/agentic-memory/host/top"
 )
 
@@ -27,6 +28,8 @@ const usage = `agentic-memory keeps one person's memory across their coding agen
   agentic-memory backfill   load the sessions a harness already wrote into
                             the service, one file at a time
   agentic-memory top        watch what the memory loop is producing
+  agentic-memory label      judge a sample of prompts and the statements they
+                            were handed: good, noise, or wrong
   agentic-memory version    print the version
 
 The bastion reads AGENTIC_MEMORY_SERVICE, AGENTIC_MEMORY_AUTHORIZATION,
@@ -51,6 +54,8 @@ func main() {
 		fill()
 	case "top":
 		os.Exit(top.Run(os.Args[2:], os.Stdout))
+	case "label":
+		os.Exit(label.Run(os.Args[2:], os.Stdout))
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":

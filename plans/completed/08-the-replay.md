@@ -1,5 +1,7 @@
 # 08, The replay
 
+Closed 2026-09-27.
+
 ## The problem
 
 Nothing measures whether the turn path helps. The injections table records
@@ -139,3 +141,43 @@ path.
 
 - **Whether 150 pairs are enough.** The first sample sets the order of
   magnitude for the next ones.
+
+## What the drill measured
+
+The replay ran against a local restore of the homelab store, over
+2026-09-21 to 2026-09-28, as of 2026-09-27T14:00Z. From 2026-09-23, where the
+live injections are comparable, it agrees with them:
+
+| | replay | live |
+|---|---|---|
+| first turns | 26, of 10 statements each | 26, of 10 statements each |
+| later turns handed something | 71, averaging 1.31 | 89, averaging 1.35 |
+| handed statements with no scope | 42.8 percent, 151 of 353 | 40.0 percent, 152 of 380 |
+
+Matched turn by turn, 298 of 311 later turns agree on whether anything was
+handed. Where both handed something, 61 of 63 handed the same set, and 20
+first turns handed the same 200 pairs. The 18 later turns only the live
+path handed are recalls on task notifications and a skill's body, which the
+replay excludes and the live path does not, and injections with no prompt
+in the record. The rest of the difference is the bastion's deadline: six
+first turns missed it live, so the live path handed the opening list one
+prompt later.
+
+The live path did write an injection row after the client had gone. A test
+held a recall past a 0.3 second client deadline, and the row appeared. The
+service now checks for a disconnected client just before the write, and
+counts that recall under the outcome `gone`. A client that leaves during the
+insert itself is still recorded.
+
+Reading what a session was handed once, as an array, in place of a check per
+row against `injections`, took the nearest query from 25.4 ms to 6.5 ms at
+the median on the live data, and the opening query from 10.3 ms to 3.7 ms.
+
+The labelling drill ran the real bastion and `agentic-memory label` against a
+local service with invented data. A sample of four pairs split into one
+opening and three matches, each key landed as a label, and a second label
+for a pair replaced the first.
+
+The replay reads each prompt against the statements live at its moment. A
+re-read writes statements after the week it replays, so plans 11 and 12 add
+a mode that reads the store as it is now.

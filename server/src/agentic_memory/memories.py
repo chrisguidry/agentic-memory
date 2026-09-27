@@ -73,6 +73,21 @@ REACHABLE = """
            OR starts_with($1, scope_key || '/'))
 """
 
+
+def live_at(moment: str) -> str:
+    """The predicate for a statement that was live at a moment.
+
+    `moment` names the query parameter that holds the moment, and a null
+    moment reads the table as it is. A moment in the past is how a replay reads
+    the table as it stood then: a statement written later was not there yet,
+    and one retired later was still live.
+    """
+    return (
+        f"(superseded_by IS NULL OR superseded_at > {moment})"
+        f" AND ({moment}::timestamptz IS NULL OR created_at <= {moment})"
+    )
+
+
 # The statements a message could replace: the live ones reachable from where it
 # was said, of the kinds that fired, newest first.
 #

@@ -12,6 +12,8 @@ listens on the network.
     agentic-memory claude     the Claude Code hook
     agentic-memory backfill   load the sessions a harness already wrote
     agentic-memory top        watch what the memory loop is producing
+    agentic-memory label      judge a sample of prompts and the statements
+                              they were handed
     agentic-memory version    print the version
 
 `bastion` answers three routes itself and proxies the rest to the service with
@@ -24,6 +26,14 @@ the authorization header added.
   and a turn with no memory, it answers with nothing. After the answer is
   written, it reads what the transcript gained and ships the lines to
   `POST /v1/transcripts`.
+
+  The bastion counts every recall that misses the deadline. The count goes
+  to the service as `missed` in the body of the next `POST /recall`, and the
+  service adds it to `agentic_memory_recall_deadline_misses_total` on its
+  `/metrics`. Prometheus does not scrape a person's machine, so this is how
+  a miss reaches the dashboard. The count is taken as delivered once the
+  request is written. A request that fails before it is written keeps its
+  count for the next recall.
 - `POST /transcripts/ship` takes `{"harness", "path", "machine", "cwd"}` and
   answers with `received`, `inserted`, and `repeated` summed over every batch
   the file took, so a caller sees the whole file.
@@ -38,6 +48,19 @@ transcripts are behind, when any are. `--scope` names
 another scope and `--all-scopes` reads every one. `--limit`, `--new`, and
 `--read` are upper bounds on the three panels, and the frame gives way from the
 top down until it fits the terminal. `--every` is the seconds between polls.
+
+`label` walks a sample built on the service with `agentic-memory-sample` and
+takes a person's judgment of each pair through `GET /labels/next` and
+`POST /labels`, both proxied by the bastion like any other route. It shows
+the prompt, the statement, its kind, its scope, and how long ago it was said,
+one pair to a screen. `--sample` names the sample to walk:
+
+    agentic-memory label --sample week-1
+
+`g`, `n`, and `w` judge the pair good, noise, or wrong and move to the next
+one. `s` skips it without judging, and comes back to it once every later pair
+in the sample has been judged. `q` quits at any time; a judgment already sent
+stands, because a label outlives the sample that asked for it.
 
 `claude` reads the payload on stdin, sends it to the socket, writes the answer
 to stdout, and exits zero whatever happened. It has a hard deadline of two

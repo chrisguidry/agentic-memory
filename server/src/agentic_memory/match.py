@@ -8,27 +8,26 @@ person and the record has nothing to add.
 
 import asyncio
 import math
+from collections.abc import Collection
 from datetime import UTC, datetime
 
 import asyncpg
 
 from .embed import Embedder, literal
-from .memories import worth
+from .memories import live_at, worth
+from .metrics import phase
 
-# Every reachable live statement this model has embedded, nearest first, with
-# whether the session was already handed it. The seen ones are read too, and
-# not filtered here, because the baseline below is over the whole scope and
-# must not move as a session is handed more.
-NEAREST = """
+# Every reachable statement this model has embedded that was live at the
+# moment, nearest first, with whether the session was already handed it. The
+# seen ones are read too, and not filtered here, because the baseline below is
+# over the whole scope and must not move as a session is handed more.
+NEAREST = f"""
     SELECT id, statement, kind, score, scope_key, session_id, entry_id,
            model, said_at, created_at, actor, actor_depth,
            1 - (embedding <=> $1::vector) AS similarity,
-           EXISTS (
-               SELECT 1 FROM injections i
-               WHERE i.session_id = $3 AND memories.id = ANY(i.memory_ids)
-           ) AS seen
+           id = ANY($3::bigint[]) AS seen
     FROM memories
-    WHERE superseded_by IS NULL
+    WHERE {live_at("$5")}
       AND embedding IS NOT NULL
       AND embedding_model = $4
       AND (scope_key IS NULL
@@ -65,17 +64,26 @@ async def match(
     pool: asyncpg.Pool,
     embedder: Embedder,
     *,
-    session_id: str,
+    seen: Collection[int],
     scope_key: str | None,
     prompt: str,
     limit: int,
     margin: float,
     now: datetime | None = None,
+    as_of: datetime | None = None,
 ) -> list[dict]:
-    """The statements about this prompt that the session has not seen, best first."""
+    """The statements about this prompt that the session has not seen, best first.
+
+    `now` is the moment the statements are aged to. `as_of` is the moment the
+    table is read at, and none means the table as it is.
+    """
     moment = now or datetime.now(UTC)
-    vector = await asyncio.to_thread(embedder.query, prompt)
-    rows = await pool.fetch(NEAREST, literal(vector), scope_key, session_id, embedder.model)
+    with phase("embed"):
+        vector = await asyncio.to_thread(embedder.query, prompt)
+    with phase("nearest"):
+        rows = await pool.fetch(
+            NEAREST, literal(vector), scope_key, list(seen), embedder.model, as_of
+        )
     floor = baseline([row["similarity"] for row in rows])
     if floor is None:
         return []

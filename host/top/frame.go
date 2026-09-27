@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/chrisguidry/agentic-memory/host/terminal"
 )
 
 // panelChrome is what the three panels cost in rows besides the rows of
@@ -38,85 +40,6 @@ func fitting(height, limit, written, read int) (int, int, int) {
 	return limit, written, read
 }
 
-// ago is how long ago a moment was, in as few characters as it takes.
-func ago(when string, now time.Time) string {
-	moment, ok := moment(when)
-	if !ok {
-		return ""
-	}
-	seconds := int(now.Sub(moment).Seconds())
-	switch {
-	case seconds < 60:
-		return fmt.Sprintf("%ds", seconds)
-	case seconds < 3600:
-		return fmt.Sprintf("%dm", seconds/60)
-	case seconds < 86400:
-		return fmt.Sprintf("%dh", seconds/3600)
-	}
-	return fmt.Sprintf("%dd", seconds/86400)
-}
-
-// moment reads a timestamp the service wrote. A timestamp without a zone is
-// read as UTC, which is the zone the service records in.
-func moment(when string) (time.Time, bool) {
-	if when == "" {
-		return time.Time{}, false
-	}
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		"2006-01-02T15:04:05.999999999",
-		"2006-01-02T15:04:05",
-	} {
-		if read, err := time.Parse(layout, when); err == nil {
-			return read.UTC(), true
-		}
-	}
-	return time.Time{}, false
-}
-
-// panel is the box one list is drawn in.
-type panel struct {
-	title    line
-	subtitle line
-	border   string
-	body     []line
-}
-
-// draw returns the panel's rows, with the title in the top border and the
-// subtitle in the bottom, both centred.
-func (p panel) draw(width int) []string {
-	rows := []string{border("╭", "╮", p.title, p.border, width)}
-	for _, body := range p.body {
-		row := line{{"│ ", p.border}}
-		row = append(row, body.truncate(width-4).pad(width-4)...)
-		row = append(row, span{" │", p.border})
-		rows = append(rows, row.render())
-	}
-	return append(rows, border("╰", "╯", p.subtitle, p.border, width))
-}
-
-func border(left, right string, label line, style string, width int) string {
-	inner := width - 2
-	if label.width() > 0 {
-		label = append(line{{" ", plain}}, append(label.truncate(inner-4), span{" ", plain})...)
-	}
-	before := (inner - label.width()) / 2
-	after := inner - label.width() - before
-	row := line{{left, style}, {strings.Repeat("─", max(before, 0)), style}}
-	row = append(row, label...)
-	row = append(row, span{strings.Repeat("─", max(after, 0)), style}, span{right, style})
-	return row.render()
-}
-
-// plural names a count of things the way a person writes it.
-func plural(count int, thing string) line {
-	word := thing
-	if count != 1 {
-		word += "s"
-	}
-	return line{{fmt.Sprintf("%d %s", count, word), dim}}
-}
-
 // memoriesPanel is what is worth remembering, ranked the way a turn would read
 // it.
 //
@@ -124,15 +47,15 @@ func plural(count int, thing string) line {
 // was written on the line above it. The number on the left is the rank the
 // order was computed from, which weighs the kind against the age, so it is not
 // the classifier's confidence.
-func memoriesPanel(rows []Memory, scope string, width int, now time.Time) panel {
-	title := line{{"top of mind", bold}}
+func memoriesPanel(rows []Memory, scope string, width int, now time.Time) terminal.Panel {
+	title := terminal.Line{{Text: "top of mind", Style: terminal.Bold}}
 	if scope == "" {
-		title = append(title, span{" all scopes", dim})
+		title = append(title, terminal.Span{Text: " all scopes", Style: terminal.Dim})
 	} else {
-		title = append(title, span{" " + scope, dim})
+		title = append(title, terminal.Span{Text: " " + scope, Style: terminal.Dim})
 	}
 
-	body := []line{{{"nothing yet. say something worth remembering.", dim}}}
+	body := []terminal.Line{{{Text: "nothing yet. say something worth remembering.", Style: terminal.Dim}}}
 	if len(rows) > 0 {
 		body = nil
 		for _, row := range rows {
@@ -151,18 +74,20 @@ func memoriesPanel(rows []Memory, scope string, width int, now time.Time) panel 
 			if actor == "" {
 				actor = "nobody recorded"
 			}
-			body = append(body, line{
-				{fmt.Sprintf("%5.2f ", row.Rank), dim},
-				{row.Kind, kindStyle(row.Kind)},
-				{fmt.Sprintf("  %s%s  %s  by %s", where, arrow, ago(row.CreatedAt, now), actor), dim},
+			body = append(body, terminal.Line{
+				{Text: fmt.Sprintf("%5.2f ", row.Rank), Style: terminal.Dim},
+				{Text: row.Kind, Style: terminal.KindStyle(row.Kind)},
+				{Text: fmt.Sprintf("  %s%s  %s  by %s", where, arrow, terminal.Ago(row.CreatedAt, now), actor), Style: terminal.Dim},
 			})
-			for _, wrapped := range wrap(twoLines(row.Statement), width-10, 2) {
-				body = append(body, line{{"      " + wrapped, plain}})
+			for _, wrapped := range terminal.Wrap(terminal.TwoLines(row.Statement), width-10, 2) {
+				body = append(body, terminal.Line{{Text: "      " + wrapped, Style: terminal.Plain}})
 			}
 		}
 	}
 
-	return panel{title: title, subtitle: plural(len(rows), "statement"), border: green, body: body}
+	return terminal.Panel{
+		Title: title, Subtitle: terminal.Plural(len(rows), "statement"), Border: terminal.Green, Body: body,
+	}
 }
 
 // writtenPanel is the statements the writer has just produced, newest first.
@@ -170,8 +95,8 @@ func memoriesPanel(rows []Memory, scope string, width int, now time.Time) panel 
 // A statement here can rank below everything in the panel above it and never
 // appear there, which is the point of this one: a plan or an approval is worth
 // watching arrive even when it is not worth reading yet.
-func writtenPanel(rows []Memory, now time.Time) panel {
-	body := []line{{{"nothing written yet.", dim}}}
+func writtenPanel(rows []Memory, now time.Time) terminal.Panel {
+	body := []terminal.Line{{{Text: "nothing written yet.", Style: terminal.Dim}}}
 	if len(rows) > 0 {
 		body = nil
 		for _, row := range rows {
@@ -179,19 +104,19 @@ func writtenPanel(rows []Memory, now time.Time) panel {
 			if where == "" {
 				where = "everywhere"
 			}
-			body = append(body, line{
-				{fmt.Sprintf("%6s ", ago(row.CreatedAt, now)), dim},
-				{row.Kind, kindStyle(row.Kind)},
-				{fmt.Sprintf("  %.2f  %s  ", row.Rank, where), dim},
-				{strings.Join(strings.Fields(row.Statement), " "), plain},
+			body = append(body, terminal.Line{
+				{Text: fmt.Sprintf("%6s ", terminal.Ago(row.CreatedAt, now)), Style: terminal.Dim},
+				{Text: row.Kind, Style: terminal.KindStyle(row.Kind)},
+				{Text: fmt.Sprintf("  %.2f  %s  ", row.Rank, where), Style: terminal.Dim},
+				{Text: strings.Join(strings.Fields(row.Statement), " "), Style: terminal.Plain},
 			})
 		}
 	}
-	return panel{
-		title:    line{{"just written", bold}},
-		subtitle: plural(len(rows), "statement"),
-		border:   magenta,
-		body:     body,
+	return terminal.Panel{
+		Title:    terminal.Line{{Text: "just written", Style: terminal.Bold}},
+		Subtitle: terminal.Plural(len(rows), "statement"),
+		Border:   terminal.Magenta,
+		Body:     body,
 	}
 }
 
@@ -199,24 +124,24 @@ func writtenPanel(rows []Memory, now time.Time) panel {
 //
 // A message that cleared no threshold is here and nowhere else, which is how a
 // reading that produced no memory is still seen.
-func readingsPanel(rows []Reading, now time.Time) panel {
-	body := []line{{{"nothing read yet.", dim}}}
+func readingsPanel(rows []Reading, now time.Time) terminal.Panel {
+	body := []terminal.Line{{{Text: "nothing read yet.", Style: terminal.Dim}}}
 	if len(rows) > 0 {
 		body = nil
 		for _, row := range rows {
 			winner, highest := row.best()
-			body = append(body, line{
-				{fmt.Sprintf("%8s ", ago(row.ClassifiedAt, now)), dim},
-				{fmt.Sprintf("%.2f %s", highest, winner), kindStyle(winner)},
-				{"  " + strings.Join(strings.Fields(row.Message), " "), dim},
+			body = append(body, terminal.Line{
+				{Text: fmt.Sprintf("%8s ", terminal.Ago(row.ClassifiedAt, now)), Style: terminal.Dim},
+				{Text: fmt.Sprintf("%.2f %s", highest, winner), Style: terminal.KindStyle(winner)},
+				{Text: "  " + strings.Join(strings.Fields(row.Message), " "), Style: terminal.Dim},
 			})
 		}
 	}
-	return panel{
-		title:    line{{"just read", bold}},
-		subtitle: plural(len(rows), "reading"),
-		border:   blue,
-		body:     body,
+	return terminal.Panel{
+		Title:    terminal.Line{{Text: "just read", Style: terminal.Bold}},
+		Subtitle: terminal.Plural(len(rows), "reading"),
+		Border:   terminal.Blue,
+		Body:     body,
 	}
 }
 
@@ -261,45 +186,40 @@ func status(asked options, drew [3]int, behind int) string {
 // frame is one redraw, from whatever the last poll returned, fitted to the
 // terminal. A frame longer than the terminal would scroll the one above it into
 // view, so it is cut to the rows there are.
-func frame(asked options, now state, size size, clock time.Time) string {
+func frame(asked options, now state, size terminal.Size, clock time.Time) string {
 	var rows []string
 	if now.problem != "" {
-		rows = append(rows, panel{
-			title:  line{{"top of mind", bold}},
-			border: red,
-			body:   []line{{{now.problem, red}}},
-		}.draw(size.columns)...)
-		rows = append(rows, panel{
-			title:  line{{"just written", bold}},
-			border: white,
-			body:   []line{{}},
-		}.draw(size.columns)...)
-		rows = append(rows, panel{
-			title:  line{{"just read", bold}},
-			border: white,
-			body:   []line{{}},
-		}.draw(size.columns)...)
-		return strings.Join(cut(rows, size.rows), "\n")
+		rows = append(rows, terminal.Panel{
+			Title:  terminal.Line{{Text: "top of mind", Style: terminal.Bold}},
+			Border: terminal.Red,
+			Body:   []terminal.Line{{{Text: now.problem, Style: terminal.Red}}},
+		}.Draw(size.Columns)...)
+		rows = append(rows, terminal.Panel{
+			Title:  terminal.Line{{Text: "just written", Style: terminal.Bold}},
+			Border: terminal.White,
+			Body:   []terminal.Line{{}},
+		}.Draw(size.Columns)...)
+		rows = append(rows, terminal.Panel{
+			Title:  terminal.Line{{Text: "just read", Style: terminal.Bold}},
+			Border: terminal.White,
+			Body:   []terminal.Line{{}},
+		}.Draw(size.Columns)...)
+		return strings.Join(terminal.Cut(rows, size.Rows), "\n")
 	}
 
-	limit, written, read := fitting(size.rows, asked.limit, asked.written, asked.read)
-	rows = append(rows, memoriesPanel(first(now.memories, limit), asked.scope, size.columns, clock).draw(size.columns)...)
-	rows = append(rows, writtenPanel(first(now.written, written), clock).draw(size.columns)...)
-	rows = append(rows, readingsPanel(first(now.readings, read), clock).draw(size.columns)...)
-	rows = append(rows, line{{status(asked, [3]int{limit, written, read}, now.behind), dim}}.render())
-	return strings.Join(cut(rows, size.rows), "\n")
+	limit, written, read := fitting(size.Rows, asked.limit, asked.written, asked.read)
+	rows = append(rows, memoriesPanel(first(now.memories, limit), asked.scope, size.Columns, clock).Draw(size.Columns)...)
+	rows = append(rows, writtenPanel(first(now.written, written), clock).Draw(size.Columns)...)
+	rows = append(rows, readingsPanel(first(now.readings, read), clock).Draw(size.Columns)...)
+	rows = append(rows, terminal.Line{
+		{Text: status(asked, [3]int{limit, written, read}, now.behind), Style: terminal.Dim},
+	}.Render())
+	return strings.Join(terminal.Cut(rows, size.Rows), "\n")
 }
 
 func first[T any](rows []T, count int) []T {
 	if len(rows) > count {
 		return rows[:count]
-	}
-	return rows
-}
-
-func cut(rows []string, height int) []string {
-	if height > 0 && len(rows) > height {
-		return rows[:height]
 	}
 	return rows
 }

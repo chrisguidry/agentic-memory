@@ -416,3 +416,49 @@ CREATE INDEX IF NOT EXISTS model_calls_called
 
 CREATE INDEX IF NOT EXISTS model_calls_run
     ON model_calls (run, called_at DESC);
+
+-- What a person thinks of one pair: one prompt and one statement it was
+-- handed. A label judges the pair and not the turn, so it outlives the rules
+-- that produced the handout. A later change to the match or the ranking is
+-- judged against the labels already given, and only the pairs it produces
+-- that were never offered before need a new one.
+--
+-- A second label for a pair replaces the first, because the row is what the
+-- person thinks now and not a log of every time they judged it.
+CREATE TABLE IF NOT EXISTS labels (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    session_id  text NOT NULL,
+    entry_id    text NOT NULL,
+    memory_id   bigint NOT NULL REFERENCES memories(id),
+    label       text NOT NULL CHECK (label IN ('good', 'noise', 'wrong')),
+    labelled_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS labels_pair
+    ON labels (session_id, entry_id, memory_id);
+
+-- A batch of pairs drawn for one sample, so the TUI has a fixed list to walk
+-- and a replay can ask for exactly the pairs a person judged. `sample` names
+-- the batch rather than getting a table of its own, because a batch is
+-- nothing but a name on a set of pairs.
+--
+-- `form` is `opening` for a session's first handout and `match` for every one
+-- after it, named when the sample is drawn because deriving it later means
+-- walking the whole injections table again.
+CREATE TABLE IF NOT EXISTS label_pairs (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sample      text NOT NULL,
+    session_id  text NOT NULL,
+    entry_id    text NOT NULL,
+    memory_id   bigint NOT NULL REFERENCES memories(id),
+    form        text NOT NULL CHECK (form IN ('opening', 'match')),
+    added_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS label_pairs_pair
+    ON label_pairs (sample, session_id, entry_id, memory_id);
+
+-- Walking a sample in id order and asking what is already labelled, which is
+-- every read the TUI and the report make.
+CREATE INDEX IF NOT EXISTS label_pairs_sample
+    ON label_pairs (sample, id);

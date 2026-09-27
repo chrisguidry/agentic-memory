@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chrisguidry/agentic-memory/host/terminal"
 )
 
 func TestEveryPanelGivesWayUntilTheFrameFits(t *testing.T) {
@@ -30,67 +32,6 @@ func TestEveryPanelGivesWayUntilTheFrameFits(t *testing.T) {
 					sized.height, sized.limit, sized.written, sized.read,
 					limit, written, read,
 					sized.wantLimit, sized.wantWritten, sized.wantRead)
-			}
-		})
-	}
-}
-
-func TestAStatementIsCutToAboutTwoLines(t *testing.T) {
-	cases := []struct {
-		name      string
-		statement string
-		want      string
-	}{
-		{"a short statement is unchanged", "keep the socket warm", "keep the socket warm"},
-		{"whitespace collapses", "keep  the\n socket\twarm", "keep the socket warm"},
-		{"an empty statement stays empty", "   ", ""},
-		{
-			"a statement at the limit is unchanged",
-			strings.Repeat("a", statementChars),
-			strings.Repeat("a", statementChars),
-		},
-		{
-			"a statement over the limit is cut and marked",
-			strings.Repeat("a", statementChars+20),
-			strings.Repeat("a", statementChars) + "…",
-		},
-		{
-			"a cut in a space drops the space",
-			strings.Repeat("a", statementChars-1) + " word",
-			strings.Repeat("a", statementChars-1) + "…",
-		},
-	}
-	for _, cut := range cases {
-		t.Run(cut.name, func(t *testing.T) {
-			if got := twoLines(cut.statement); got != cut.want {
-				t.Errorf("twoLines(%q) = %q, want %q", cut.statement, got, cut.want)
-			}
-		})
-	}
-}
-
-func TestAMomentIsDrawnAsHowLongAgoItWas(t *testing.T) {
-	now := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
-	cases := []struct {
-		name string
-		when string
-		want string
-	}{
-		{"no moment draws nothing", "", ""},
-		{"an unreadable moment draws nothing", "the other day", ""},
-		{"seconds", "2026-03-04T11:59:31+00:00", "29s"},
-		{"a minute is still minutes", "2026-03-04T11:59:00+00:00", "1m"},
-		{"minutes", "2026-03-04T11:20:00+00:00", "40m"},
-		{"hours", "2026-03-04T05:00:00+00:00", "7h"},
-		{"days", "2026-02-25T12:00:00+00:00", "7d"},
-		{"a moment with no zone is read as UTC", "2026-03-04T10:30:00.123456", "1h"},
-		{"a moment with a zulu zone", "2026-03-04T11:00:00Z", "1h"},
-		{"a moment in another zone", "2026-03-04T07:00:00-04:00", "1h"},
-	}
-	for _, moment := range cases {
-		t.Run(moment.name, func(t *testing.T) {
-			if got := ago(moment.when, now); got != moment.want {
-				t.Errorf("ago(%q) = %q, want %q", moment.when, got, moment.want)
 			}
 		})
 	}
@@ -155,7 +96,7 @@ func TestAFrameDrawsTheThreePanels(t *testing.T) {
 		"\x1b[2m  2 top of mind · 1 just written · 1 just read · polling /run/agentic-memory.sock\x1b[0m",
 	}, "\n")
 
-	got := frame(asked, drawn, size{rows: 24, columns: 80}, now)
+	got := frame(asked, drawn, terminal.Size{Rows: 24, Columns: 80}, now)
 	if got != want {
 		t.Errorf("the frame was drawn as\n%s\nwant\n%s", visible(got), visible(want))
 	}
@@ -179,7 +120,7 @@ func TestTheStatusLineSaysHowManyTranscriptsAreBehind(t *testing.T) {
 	for _, drawn := range cases {
 		t.Run(drawn.name, func(t *testing.T) {
 			asked := options{limit: 1, written: 1, read: 1, socket: "/run/agentic-memory.sock"}
-			got := frame(asked, state{behind: drawn.behind}, size{rows: 24, columns: 80}, time.Now())
+			got := frame(asked, state{behind: drawn.behind}, terminal.Size{Rows: 24, Columns: 80}, time.Now())
 			if !strings.Contains(got, drawn.want) {
 				t.Errorf("the status line does not say %q:\n%s", drawn.want, visible(got))
 			}
@@ -189,7 +130,7 @@ func TestTheStatusLineSaysHowManyTranscriptsAreBehind(t *testing.T) {
 
 func TestAFrameThatCannotReachTheBastionSaysSo(t *testing.T) {
 	drawn := state{problem: "cannot reach the bastion at /run/agentic-memory.sock: no such file"}
-	got := frame(options{limit: 10, written: 10, read: 10}, drawn, size{rows: 24, columns: 80}, time.Now())
+	got := frame(options{limit: 10, written: 10, read: 10}, drawn, terminal.Size{Rows: 24, Columns: 80}, time.Now())
 
 	if !strings.Contains(got, "cannot reach the bastion") {
 		t.Errorf("the frame did not say the bastion is unreachable:\n%s", visible(got))
@@ -204,7 +145,7 @@ func TestAFrameThatCannotReachTheBastionSaysSo(t *testing.T) {
 
 func TestAFrameIsCutToTheRowsTheTerminalHas(t *testing.T) {
 	drawn := state{}
-	got := frame(options{limit: 10, written: 10, read: 10}, drawn, size{rows: 5, columns: 80}, time.Now())
+	got := frame(options{limit: 10, written: 10, read: 10}, drawn, terminal.Size{Rows: 5, Columns: 80}, time.Now())
 	if rows := strings.Count(got, "\n") + 1; rows != 5 {
 		t.Errorf("the frame drew %d rows into a terminal of 5", rows)
 	}
