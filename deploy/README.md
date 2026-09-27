@@ -30,8 +30,8 @@ kubectl -n agentic-memory create secret generic agentic-memory \
 
 `AGENTIC_MEMORY_TIME_ZONE` in the ConfigMap is the person's time zone, as an
 IANA name such as `America/New_York`. The writer is told when each message was
-said in this zone, so a commitment "until tomorrow morning" ends at the
-person's morning. The record holds no zone for the person, so the base sets
+said in this zone, so "tomorrow morning" in a message means the person's
+morning. The record holds no zone for the person, so the base sets
 UTC, and an overlay patches it to the person's zone. The service refuses to
 start with a name that is not a zone.
 

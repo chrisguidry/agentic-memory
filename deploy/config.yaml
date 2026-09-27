@@ -10,6 +10,6 @@ data:
   AGENTIC_MEMORY_PORT: "4318"
   AGENTIC_MEMORY_EMBED_CACHE: /app/models
   # The person's time zone, as an IANA name such as America/New_York. The
-  # writer reads "tomorrow morning" and "Monday" in this zone when it writes
-  # the moment a commitment ends. An overlay sets it to the person's zone.
+  # writer is told when each message was said in this zone, so "tomorrow
+  # morning" and "Monday" mean the person's. An overlay sets it.
   AGENTIC_MEMORY_TIME_ZONE: UTC

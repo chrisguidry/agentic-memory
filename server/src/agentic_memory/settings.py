@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # The person's time zone, as an IANA name such as America/New_York. The
     # writer is told when a message was said in this zone, so "tomorrow
-    # morning" and "Monday" end a commitment at the person's morning and not at
+    # morning" and "Monday" mean the person's morning and Monday, and not
     # UTC's. The record carries no zone for the person, so this is UTC until it
     # is set, and a name that is not a zone is refused at startup.
     time_zone: ZoneInfo = ZoneInfo("UTC")
