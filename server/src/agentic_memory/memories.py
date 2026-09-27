@@ -145,8 +145,9 @@ RETIRE = f"""
 
 # Why a statement ended with nothing to replace it. `event` is a later message
 # that met a commitment's condition. `reread` is a statement that a read of the
-# record under new questions did not write again.
-Ending = Literal["event", "reread"]
+# record under new questions did not write again. `state` is a statement the
+# sort found to be only the state of the work, such as uncommitted files.
+Ending = Literal["event", "reread", "state"]
 
 END = f"""
     UPDATE memories
@@ -254,7 +255,7 @@ async def memories(
 
 
 async def retire(
-    pool: asyncpg.Pool,
+    pool: asyncpg.Pool | asyncpg.Connection,
     *,
     replaced: Iterable[int],
     replacement: int,
@@ -265,7 +266,8 @@ async def retire(
     The moment recorded is when the service learned about the replacement, and
     not the end of the interval the replaced statement was true in. The service
     learns that something stopped being true at a different moment from when it
-    stopped, and the two are kept apart on purpose.
+    stopped, and the two are kept apart on purpose. A connection in a
+    transaction retires them as part of that transaction.
     """
     moment = now or datetime.now(UTC)
     ended = []
@@ -279,7 +281,7 @@ async def retire(
 
 
 async def end(
-    pool: asyncpg.Pool,
+    pool: asyncpg.Pool | asyncpg.Connection,
     *,
     ended: Iterable[int],
     reason: Ending,
@@ -290,7 +292,8 @@ async def end(
 
     `message` is the session and entry of the message that met the condition,
     when a message did. The moment recorded is when the service learned the
-    statement ended, as it is for a replacement.
+    statement ended, as it is for a replacement. A connection in a transaction
+    ends them as part of that transaction.
     """
     moment = now or datetime.now(UTC)
     session_id, entry_id = message or (None, None)

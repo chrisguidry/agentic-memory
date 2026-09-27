@@ -78,3 +78,46 @@ async def test_the_price_is_the_calls_already_made_times_what_is_left(unanswered
     assert await run(arguments) == (
         "3 statements unanswered, about 1200 input and 60 output tokens\n"
     )
+
+
+@pytest.fixture
+async def unsorted(store: asyncpg.Pool) -> asyncpg.Pool:
+    for number in range(4):
+        await store.execute(
+            """
+            INSERT INTO memories
+                (statement, kind, score, session_id, entry_id, model, questions_fingerprint)
+            VALUES ($1, 'prospective', 0.9, 's1', $1, 'jev-1.13.0', 'fp')
+            """,
+            f"Do not release widget {number} before Monday.",
+        )
+    return store
+
+
+@pytest.mark.parametrize(
+    "limit, expected",
+    [([], "4 prospective statements unsorted"), (["--limit=3"], "3 prospective statements")],
+)
+async def test_the_sort_price_names_what_is_left_before_any_call(
+    unsorted, postgres_url, limit, expected
+):
+    arguments = parser().parse_args(
+        ["sort", "--run=first", "--price", *limit, f"--database-url={postgres_url}"]
+    )
+    assert (await run(arguments)).startswith(expected)
+
+
+async def test_the_sort_price_is_the_calls_already_made_times_what_is_left(unsorted, postgres_url):
+    await unsorted.execute(
+        """
+        INSERT INTO model_calls (provider, model, task, input_tokens, output_tokens, outcome)
+        VALUES ('typesafe', 'jev-1.13.0', 'sort', 2000, 40, 'ok'),
+               ('typesafe', 'jev-1.13.0', 'actionable', 400, 20, 'ok')
+        """
+    )
+    arguments = parser().parse_args(
+        ["sort", "--run=first", "--price", f"--database-url={postgres_url}"]
+    )
+    assert await run(arguments) == (
+        "4 prospective statements unsorted, about 8000 input and 160 output tokens\n"
+    )

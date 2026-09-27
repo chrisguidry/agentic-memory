@@ -1,10 +1,12 @@
 """Filling in what the worker writes for new rows, for the rows already stored.
 
-The worker answers two things as it writes, and a store that predates them
+The worker answers three things as it writes, and a store that predates them
 needs them for every row it holds. `actionable` asks the System One model the actionable question
 about every live statement with no answer, and records each call in the ledger
-under a named run. `readings` embeds the prompt of every reading, with the
-local model and no network call.
+under a named run. `sort` asks it the sort's questions about every live
+prospective statement the sort has not answered, and writes where each one
+goes, under a named run the same way. `readings` embeds the prompt of every
+reading, with the local model and no network call.
 """
 
 import argparse
@@ -17,9 +19,11 @@ from .actionable import answer, price, unanswered
 from .classify import model_client
 from .db import open_pool
 from .embed import load
-from .ledger import RecordedSystemOne
+from .ledger import RecordedSystemOne, priced
 from .readings import BATCH, embed_readings
 from .settings import get_settings
+from .sorting import TASK as SORT
+from .sorting import sort, unsorted
 
 
 def parser() -> argparse.ArgumentParser:
@@ -33,20 +37,28 @@ def parser() -> argparse.ArgumentParser:
         "actionable",
         help="ask the actionable question about every live statement with no answer",
     )
-    statements.add_argument(
-        "--run", required=True, help="the name the ledger records these calls under"
+    prospective = kinds.add_parser(
+        "sort",
+        help=(
+            "sort every live prospective statement the sort has not answered into a"
+            " decision, the state of the work, or a commitment"
+        ),
     )
-    statements.add_argument(
-        "--price",
-        action="store_true",
-        help="print what is left and what it would cost, from the calls already made, and stop",
-    )
-    statements.add_argument(
-        "--limit", type=int, default=None, help="answer at most this many, oldest first"
-    )
-    statements.add_argument(
-        "--concurrency", type=int, default=8, help="how many calls are made at once"
-    )
+    for asking in (statements, prospective):
+        asking.add_argument(
+            "--run", required=True, help="the name the ledger records these calls under"
+        )
+        asking.add_argument(
+            "--price",
+            action="store_true",
+            help="print what is left and what it would cost, from the calls already made, and stop",
+        )
+        asking.add_argument(
+            "--limit", type=int, default=None, help="ask about at most this many, oldest first"
+        )
+        asking.add_argument(
+            "--concurrency", type=int, default=8, help="how many calls are made at once"
+        )
 
     prompts = kinds.add_parser(
         "readings", help="embed the prompt of every reading, with the local model"
@@ -83,14 +95,44 @@ async def actionable(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
             f" {cost[1]} output tokens\n"
         )
     async with model_client() as client:
-        count = await answer(
+        count, failed = await answer(
             pool,
             RecordedSystemOne(client, pool),
             rows,
             run=arguments.run,
             concurrency=arguments.concurrency,
         )
-    return f"answered {count} of {len(rows)} statements under the run {arguments.run}\n"
+    return (
+        f"answered {count} of {len(rows)} statements under the run {arguments.run},"
+        f" and {failed} failed\n"
+    )
+
+
+async def prospective(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
+    rows = await unsorted(pool)
+    if arguments.limit is not None:
+        rows = rows[: arguments.limit]
+    if arguments.price:
+        cost = await priced(pool, SORT, len(rows))
+        if cost is None:
+            return f"{len(rows)} prospective statements unsorted, and no calls to price them from\n"
+        return (
+            f"{len(rows)} prospective statements unsorted, about {cost[0]} input and"
+            f" {cost[1]} output tokens\n"
+        )
+    async with model_client() as client:
+        count, failed = await sort(
+            pool,
+            RecordedSystemOne(client, pool),
+            rows,
+            settings=get_settings(),
+            run=arguments.run,
+            concurrency=arguments.concurrency,
+        )
+    return (
+        f"sorted {count} of {len(rows)} prospective statements under the run {arguments.run},"
+        f" and {failed} failed\n"
+    )
 
 
 async def readings(pool: asyncpg.Pool, arguments: argparse.Namespace) -> str:
@@ -106,6 +148,8 @@ async def run(arguments: argparse.Namespace) -> str:
     try:
         if arguments.backfill == "actionable":
             return await actionable(pool, arguments)
+        if arguments.backfill == "sort":
+            return await prospective(pool, arguments)
         return await readings(pool, arguments)
     finally:
         await pool.close()

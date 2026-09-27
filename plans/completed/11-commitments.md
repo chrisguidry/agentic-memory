@@ -1,5 +1,7 @@
 # 11, Commitments
 
+Closed 2026-09-27.
+
 ## The problem
 
 The prospective question asks whether a message settles something, defers
@@ -109,15 +111,6 @@ the same as one that was replaced.
 - The replay under plan 08 shows prospective's share of new statements
   over the same week, before and after.
 
-## What is built
-
-The columns for a condition and for an end without a successor, the read
-that leaves out a statement past its moment, the time zone setting, and the
-replay mode that reads the store as it is now are built and released. So is
-a wider plumbing filter: Stop-hook feedback, goal check-ins, messages from
-another session, bare slash commands, and prompts that are only images are
-no longer read as the person's prompts. Nothing fills the condition yet.
-
 ## What was tried
 
 Two sorts were measured on 80 prospective statements from a week of real
@@ -135,7 +128,51 @@ wording over four rounds did not change that. When it did give a sort, it
 named 5 of 7 commitments, 18 of 30 decisions, and 3 of 20 statements of
 the state of the work.
 
+## What the drill measured
+
+The sort asks Jev five questions about each prospective statement in one
+call: whether it is a commitment, a decision, or the state of the work,
+whether a decision is semantic or procedural, and when a commitment ends.
+The last is a choice among moments computed from when the message was said
+in the person's zone: the end of that day, the next morning at 09:00, the
+end of the next day, the next Monday at 09:00, an event, or none.
+
+On the same 80 hand-sorted statements, the sort landed 61 where the table
+puts them, against 40 for the narrower questions and 34 for the writer's
+sort. Across the last two rounds, all 42 decisions became semantic or
+procedural and none ended.
+
+| sorted by hand | what the sort did |
+|---|---|
+| 9 commitments | 1 with a moment, 7 with an event, 1 ended |
+| 42 decisions | 32 semantic, 10 procedural |
+| 29 state of the work | 11 ended, 12 kept as decisions, 6 kept as commitments |
+
+The state of the work is where it errs, and it errs toward keeping. At a
+decision threshold of 0.55 the sort starts to end decisions, so the
+threshold stays at 0.5.
+
+A commitment said at 00:17 on a Sunday not to act before the next morning
+resolved to 09:00 on Monday. "Tomorrow morning" said at 23:30 on a Saturday,
+when UTC is already Sunday, resolved to 09:00 on Sunday in the person's zone.
+
+A decision becomes a new semantic or procedural row, and the prospective row
+retires into it. When the message already has a statement of that kind, the
+prospective row stays prospective, because retiring it into that statement
+would retire it into a different sentence. The claim, the new row, and the
+retirement run in one transaction, and a statement a backfill listed but
+that something else retired or sorted since is left alone.
+
+Sorting the 1,307 live prospective statements takes about 4.4 million input
+tokens, because each call carries the exchange the statement came from.
+
 ## Open questions
+
+- **What ends a commitment on its event.** The event is stored as the
+  statement's own words, and nothing reads it yet. An event is usually
+  reported by the agent, and the writer reads only the person's prompts, so
+  the writer's replacement path rarely sees one. A commitment with an event
+  fades by age until this is built.
 
 - **Whether a commitment with neither form should be written.** "Revisit
   this someday" has no condition. Writing it with no end makes it permanent,

@@ -117,6 +117,24 @@ class Settings(BaseSettings):
     merge_upper: float = 0.95
     merge_lower: float = 0.80
 
+    # Sorting a prospective statement. The System One model's answers are read
+    # in order, and the first one at or above its threshold says where the
+    # statement goes: a commitment, then a decision, then the state of the work.
+    # A commitment takes the moment the model chose only when the model's
+    # confidence in it is at or above `sort_moment`.
+    #
+    # Over 80 statements sorted by hand into 9 commitments, 42 decisions, and
+    # 29 statements of the state of the work, 0.5 on each put 59 where the
+    # hand put them, ended no decision, and left no decision prospective. The
+    # commitment and state thresholds moved that by one either way between 0.4
+    # and 0.7. The decision threshold is the one to move with care: 15 of the
+    # 29 statements of the state of the work score above it and are kept as
+    # decisions, and at 0.55 two decisions end.
+    sort_commitment: float = 0.5
+    sort_decision: float = 0.5
+    sort_state: float = 0.5
+    sort_moment: float = 0.5
+
     # How often the sweep looks for work a failed model call left undone, and
     # how far back it looks. The interval is short because the query costs
     # nothing when there is nothing to find. The lookback is a month for the

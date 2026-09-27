@@ -44,8 +44,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     async with AsyncExitStack() as stack:
         app.state.pool = await stack.enter_async_context(store_pool())
-        # The schema is applied here and not by the worker, so two processes
-        # starting together cannot run the same data definition at once.
+        # The worker applies the schema too, because either one can start
+        # first, and the two take turns under a lock.
         await db.apply_schema(app.state.pool)
         # The service schedules work and never runs it, so a model call cannot
         # hold up an ingest. The worker holds the same docket and reads there.

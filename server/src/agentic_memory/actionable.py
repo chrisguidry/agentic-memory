@@ -23,7 +23,7 @@ from collections.abc import Sequence
 import asyncpg
 from typesafe_sdk import Noul, TypeSafeBadRequestError
 
-from .ledger import RecordedSystemOne, calling
+from .ledger import RecordedSystemOne, calling, priced
 
 log = logging.getLogger("agentic_memory.actionable")
 
@@ -65,15 +65,6 @@ UNANSWERED = """
 
 STORE = "UPDATE memories SET actionable = $2 WHERE id = $1"
 
-# The tokens of the calls this question has made, as the provider counted them.
-# A statement is one sentence, so the calls are close to one size, and the mean
-# of the calls made so far prices the calls still to make.
-SPENT = f"""
-    SELECT avg(input_tokens) AS input_tokens, avg(output_tokens) AS output_tokens
-    FROM model_calls
-    WHERE task = '{TASK}' AND outcome = 'ok'
-"""
-
 
 async def ask(client: RecordedSystemOne, row: asyncpg.Record, run: str) -> float | None:
     """The model's answer about one statement, or none when it refused.
@@ -91,6 +82,17 @@ async def ask(client: RecordedSystemOne, row: asyncpg.Record, run: str) -> float
     return response.nouls[TASK].noul
 
 
+async def answer_one(
+    pool: asyncpg.Pool, client: RecordedSystemOne, row: asyncpg.Record, run: str
+) -> bool:
+    """Answer the question for one statement and store the answer, unless it was refused."""
+    probability = await ask(client, row, run)
+    if probability is None:
+        return False
+    await pool.execute(STORE, row["id"], probability)
+    return True
+
+
 async def answer(
     pool: asyncpg.Pool,
     client: RecordedSystemOne,
@@ -98,22 +100,26 @@ async def answer(
     *,
     run: str = "live",
     concurrency: int = 1,
-) -> int:
-    """Answer the question for these statements and store the answers. Returns how many.
+) -> tuple[int, int]:
+    """Answer the question for a backfill. Returns how many were answered and how many failed.
 
     The calls are independent of each other, so a backfill runs several at once.
+    A statement that fails is logged and left unanswered, and the rest go on, so
+    one timeout does not stop a pass over thousands of statements. A refusal is
+    neither: it is logged and left unanswered.
     """
     limit = asyncio.Semaphore(concurrency)
 
-    async def one(row: asyncpg.Record) -> bool:
+    async def one(row: asyncpg.Record) -> bool | None:
         async with limit:
-            probability = await ask(client, row, run)
-        if probability is None:
-            return False
-        await pool.execute(STORE, row["id"], probability)
-        return True
+            try:
+                return await answer_one(pool, client, row, run)
+            except Exception:
+                log.exception("could not answer the actionable question for %s", row["id"])
+                return None
 
-    return sum(await asyncio.gather(*(one(row) for row in rows)))
+    done = await asyncio.gather(*(one(row) for row in rows))
+    return done.count(True), done.count(None)
 
 
 async def unanswered(pool: asyncpg.Pool) -> list[asyncpg.Record]:
@@ -129,14 +135,20 @@ async def answer_message(
     entry_id: str,
     run: str = "live",
 ) -> int:
-    """Answer the question for the live statements one message wrote."""
+    """Answer the question for the live statements one message wrote. Returns how many.
+
+    A failure is raised, so the worker tries the task again.
+    """
     rows = await pool.fetch(UNANSWERED, session_id, entry_id)
-    return await answer(pool, client, rows, run=run)
+    answered = 0
+    for row in rows:
+        answered += await answer_one(pool, client, row, run)
+    return answered
 
 
 async def price(pool: asyncpg.Pool, count: int) -> tuple[int, int] | None:
-    """The input and output tokens `count` more calls would take, or none before any call."""
-    spent = await pool.fetchrow(SPENT)
-    if spent["input_tokens"] is None:
-        return None
-    return round(spent["input_tokens"] * count), round(spent["output_tokens"] * count)
+    """The input and output tokens `count` more calls would take, or none before any call.
+
+    A statement is one sentence, so the calls are close to one size.
+    """
+    return await priced(pool, TASK, count)

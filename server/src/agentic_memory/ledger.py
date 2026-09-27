@@ -230,6 +230,27 @@ class RecordedCompletions:
         return response
 
 
+# The mean tokens of one task's calls that succeeded, as the provider counted
+# them. A backfill asks the same question of rows of about one size, so the mean
+# of the calls made so far prices the calls still to make.
+SPENT = """
+    SELECT avg(input_tokens) AS input_tokens, avg(output_tokens) AS output_tokens
+    FROM model_calls
+    WHERE task = $1 AND outcome = 'ok'
+"""
+
+
+async def priced(pool: asyncpg.Pool, task: str, count: int) -> tuple[int, int] | None:
+    """The input and output tokens `count` more calls of a task would take.
+
+    None before the task has made a call, because there is nothing to price from.
+    """
+    spent = await pool.fetchrow(SPENT, task)
+    if spent["input_tokens"] is None:
+        return None
+    return round(spent["input_tokens"] * count), round(spent["output_tokens"] * count)
+
+
 # The four ways to total the ledger. The group names come from this table and
 # never from the caller, so the query is built from a name the code defines.
 GROUPINGS = {

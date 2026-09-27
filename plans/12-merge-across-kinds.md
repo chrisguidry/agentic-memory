@@ -38,6 +38,13 @@ statements.
 
 ### The re-read
 
+Plans 10 and 11 were built without changing the classifier's questions. The
+statements the old questions wrote as prospective are sorted by plan 11's
+backfill, and statements that say the same thing are retired by the merge
+pass, so what the re-read was for is covered by two passes of about 1,300
+and 870 calls. The re-read below is kept for a later change to the
+questions, and it waits for one.
+
 After plans 10 and 11 are built, the classifier and the writer read the
 whole record again under the new questions, as the run `reread`. The new
 statements are written beside the old ones, because the question
@@ -55,6 +62,13 @@ fingerprint is part of the key. Then:
 Nothing is deleted. `otel_exports` and `logs` are not touched. An old
 statement is still in the table, with the pointer or the reason that ended
 it, so the step is reversible by clearing those columns.
+
+During the re-read, a statement written under the new questions must not
+retire into one written under the old questions. The new statement is often
+the older of the two by the moment its message was said, and step 1 then
+ends the old-questions statement it retired into, so nothing live carries
+its content. The merge compares statements of one question set during the
+re-read.
 
 ### Reading the replay after the re-read
 
@@ -88,6 +102,11 @@ plans 11 and 12 compare before and after in that mode.
 
 ## Open questions
 
+- **Whether to merge across kinds at all.** A drill over one scope judged 15
+  of 40 merges wrong, 8 of 15 of them across kinds: the question of whether
+  two statements say the same thing answers 0.53 to 0.72 for pairs that are
+  only about the same area, and right merges fall in the same range. The
+  merge compares one kind at a time until a question separates them.
 - **Whether the survivor should take the kind with the higher weight.** A
   decision that was first written as praise and then as semantic keeps
   semantic, because the newer survives. The reverse order would keep

@@ -10,6 +10,7 @@ import logging
 from docket import Docket, Worker
 
 from .classify import classify
+from .db import apply_schema, open_pool
 from .embed import embed_statements
 from .merge import merge_statements
 from .readings import embed_reading
@@ -35,9 +36,23 @@ TASKS = (
 )
 
 
+async def prepare_store(database_url: str) -> None:
+    """Bring the store up to the schema this code needs, before any task runs.
+
+    The service and the worker roll out separately, and a worker that starts
+    first would run every task against the store the old code left.
+    """
+    pool = await open_pool(database_url, size=1)
+    try:
+        await apply_schema(pool)
+    finally:
+        await pool.close()
+
+
 async def serve() -> None:
     """Run a worker until it is stopped."""
     settings = get_settings()
+    await prepare_store(settings.database_url)
     async with Docket(name=settings.docket_name, url=settings.redis_url) as docket:
         for task in TASKS:
             docket.register(task)

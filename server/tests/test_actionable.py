@@ -109,6 +109,20 @@ class TestAnswerMessage:
         assert (row["task"], row["run"], row["entry_id"]) == ("actionable", "backfill-1", "e1")
 
 
+class FailingOnceJudge(FakeJudge):
+    """A model whose first call fails the way a timeout or a 503 does."""
+
+    def __init__(self):
+        super().__init__()
+        self.failed = False
+
+    async def system_one(self, *, state, questions):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("the provider answered 503")
+        return await super().system_one(state=state, questions=questions)
+
+
 class TestBackfill:
     async def test_only_live_unanswered_statements_are_candidates(self, store):
         live = await held(store, "The widget is written in Go.", entry_id="e1")
@@ -126,8 +140,15 @@ class TestBackfill:
         for number in range(5):
             await held(store, f"Rule {number} of the widget.", entry_id=f"e{number}")
         count = await answer(store, FakeJudge(), await unanswered(store), concurrency=2)
-        assert count == 5
+        assert count == (5, 0)
         assert await unanswered(store) == []
+
+    async def test_a_failure_is_counted_and_the_rest_are_answered(self, store):
+        for number in range(3):
+            await held(store, f"Rule {number} of the widget.", entry_id=f"e{number}")
+        count = await answer(store, FailingOnceJudge(), await unanswered(store))
+        assert count == (2, 1)
+        assert len(await unanswered(store)) == 1
 
     async def test_the_price_is_read_from_the_calls_already_made(self, store):
         await store.execute(

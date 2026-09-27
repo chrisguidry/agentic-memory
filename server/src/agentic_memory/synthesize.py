@@ -34,6 +34,7 @@ from .memories import retire, standing
 from .merge import merge_message
 from .replacing import CORRECTS_EARLIER, candidates_block, offered_numbers
 from .settings import Settings, get_settings
+from .sorting import sort_message
 
 log = logging.getLogger("agentic_memory.synthesize")
 
@@ -398,22 +399,34 @@ async def synthesize(
         written = await write(session_id, entry_id, settings=settings, pool=pool, client=client)
     if written:
         log.info("wrote %s for %s %s: %s", len(written), session_id, entry_id, written)
-        # Embedded here rather than by a later pass, so a statement can be
-        # matched against a prompt as soon as it exists.
-        await embed_message(pool, embedder, session_id, entry_id)
-        # And merged here rather than by a later pass, so a rule said twice does
-        # not sit in the table twice waiting for the backlog.
-        merged = await merge_message(
-            pool,
-            judge,
-            session_id=session_id,
-            entry_id=entry_id,
-            model=embedder.model,
-            settings=settings,
-            run=run,
-        )
-        if merged:
-            log.info("merged %s statements for %s %s", merged, session_id, entry_id)
+    # Every step after the writer runs on every attempt, because a retry writes
+    # nothing: the first attempt wrote the statements, and a failure after it
+    # would otherwise leave them unembedded and unmerged for good. Each step
+    # does only what is still undone, so an attempt after a success asks
+    # nothing.
+    #
+    # Embedded here rather than by a later pass, so a statement can be matched
+    # against a prompt as soon as it exists. Embedded before the sort, so a sort
+    # that fails on every attempt leaves nothing unembedded, and a decision the
+    # sort writes again as semantic or procedural takes its embedding with it.
+    await embed_message(pool, embedder, session_id, entry_id)
+    await sort_message(
+        pool, judge, session_id=session_id, entry_id=entry_id, settings=settings, run=run
+    )
+    # Merged here rather than by a later pass, so a rule said twice does not sit
+    # in the table twice waiting for the backlog. Merged after the sort, so a
+    # decision is merged under its new kind.
+    merged = await merge_message(
+        pool,
+        judge,
+        session_id=session_id,
+        entry_id=entry_id,
+        model=embedder.model,
+        settings=settings,
+        run=run,
+    )
+    if merged:
+        log.info("merged %s statements for %s %s", merged, session_id, entry_id)
     # Answered here rather than by a later pass, so the match can leave out a
     # statement that changes nothing as soon as the statement exists. Only the
     # statements with no answer are asked, so a retry after a failure above

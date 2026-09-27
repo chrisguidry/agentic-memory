@@ -353,13 +353,28 @@ ALTER TABLE memories ADD COLUMN IF NOT EXISTS until_event text;
 -- The end of a statement that no newer statement replaced. `event` is a later
 -- message that met the condition, and that message is named. `reread` is a
 -- statement the questions no longer write, left behind by a read of the
--- record under new questions. Like `superseded_at`, `ended_at` is a recorded
--- time, and clearing these columns makes the statement live again.
+-- record under new questions. `state` is a prospective statement the sort
+-- found to be only the state of the work, such as a branch ahead of its
+-- remote. Like `superseded_at`, `ended_at` is a recorded time, and clearing
+-- these columns makes the statement live again.
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_at timestamptz;
-ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_reason text
-    CHECK (ended_reason IN ('event', 'reread'));
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_reason text;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_by_session_id text;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS ended_by_entry_id text;
+
+-- ADD COLUMN IF NOT EXISTS does nothing to a column that exists, so a new reason
+-- cannot reach an older store through the column's own CHECK. The check is
+-- dropped and added again under the name Postgres gave the column's CHECK, so
+-- a store with the older list and a store with none both end with this one.
+-- The table is small enough that checking every row at startup costs little.
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS memories_ended_reason_check;
+ALTER TABLE memories ADD CONSTRAINT memories_ended_reason_check
+    CHECK (ended_reason IN ('event', 'reread', 'state'));
+
+-- When the sort answered a prospective statement, whatever it decided. A
+-- commitment stays prospective and live, and without this the worker and the
+-- backfill would ask about it again.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS sorted_at timestamptz;
 
 -- One statement per message per kind per question set, so a retry writes
 -- nothing and one message can carry a fact and a rule at once.

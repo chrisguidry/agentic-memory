@@ -205,7 +205,21 @@ async def classified(
 SCHEMA = Path(__file__).resolve().parents[2] / "schema.sql"
 
 
+# The key of the advisory lock the schema is applied under. The service and the
+# worker both apply the schema when they start, and two concurrent
+# `CREATE ... IF NOT EXISTS` of one object can both find it missing, so one
+# fails on a duplicate. Under the lock, the second waits for the first and then
+# finds everything in place. The number means nothing, and it only has to
+# differ from any other advisory lock taken on this database.
+SCHEMA_LOCK = 4_318_001
+
+
 async def apply_schema(pool: asyncpg.Pool) -> None:
-    """Bring the database up to the schema in the file."""
-    async with pool.acquire() as connection:
+    """Bring the database up to the schema in the file, one process at a time.
+
+    The lock is released when the transaction ends, so a process that dies
+    while it holds the lock does not keep the next one waiting.
+    """
+    async with pool.acquire() as connection, connection.transaction():
+        await connection.execute("SELECT pg_advisory_xact_lock($1)", SCHEMA_LOCK)
         await connection.execute(SCHEMA.read_text())
